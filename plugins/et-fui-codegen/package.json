@@ -1,0 +1,35 @@
+{
+	"name": "et-fui-codegen",
+	"version": "0.1.0",
+	"description": "OpenFairyGUI publish plugin for deterministic ET/FairyGUI C# code generation.",
+	"license": "MIT",
+	"type": "module",
+	"private": true,
+	"main": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"build": "tsdown src/index.ts --format esm --platform neutral --dts",
+		"typecheck": "tsc --noEmit -p tsconfig.json",
+		"test": "ava --no-worker-threads",
+		"lint": "biome check src test scripts",
+		"smoke:projzero": "tsx scripts/smoke-projzero.ts"
+	},
+	"devDependencies": {
+		"@openfairygui/core": "workspace:*",
+		"@openfairygui/functions": "workspace:*"
+	},
+	"ava": {
+		"extensions": {
+			"ts": "module"
+		},
+		"nodeArguments": [
+			"--import",
+			"tsx/esm"
+		],
+		"files": [
+			"test/**/*.test.ts"
+		]
+	}
+}

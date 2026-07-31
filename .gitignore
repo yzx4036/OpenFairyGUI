@@ -40,3 +40,5 @@ Thumbs.db
 # AI agent
 AGENTS.md
 .omx
+.pnpm-store
+test-output

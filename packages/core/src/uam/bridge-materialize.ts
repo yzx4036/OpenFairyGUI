@@ -1,6 +1,7 @@
 import { bindLookGear, composeController } from '../authoring.js';
 import { GearType, } from '../constants.js';
 import { Document } from '../document.js';
+import { applyDerivedMovieClipModel, deriveMovieClipModelFromJta } from '../utils/jta-parser.js';
 import type {
 	UamAnimationGearBinding,
 	UamAssetResource,
@@ -21,6 +22,7 @@ import type {
 	UamGraphNode,
 	UamGraphProperties,
 	UamGroupNode,
+	UamGroupProperties,
 	UamIconGearBinding,
 	UamImageNode,
 	UamImageResourceProperties,
@@ -32,6 +34,7 @@ import type {
 	UamLoaderProperties,
 	UamLookGearBinding,
 	UamMovieClipNode,
+	UamMovieClipResourceProperties,
 	UamPlainTextProperties,
 	UamProject,
 	UamProgressBarNode,
@@ -63,14 +66,25 @@ type MaterializedDisplayNodeBase = {
 	setId(id: string): MaterializedDisplayNodeBase;
 	setXY(x: number, y: number): MaterializedDisplayNodeBase;
 	setSize(width: number, height: number): MaterializedDisplayNodeBase;
+	setLocked(locked: boolean): MaterializedDisplayNodeBase;
+	setAspect(aspect: boolean): MaterializedDisplayNodeBase;
+	setMinWidth(width: number): MaterializedDisplayNodeBase;
+	setMaxWidth(width: number): MaterializedDisplayNodeBase;
+	setMinHeight(height: number): MaterializedDisplayNodeBase;
+	setMaxHeight(height: number): MaterializedDisplayNodeBase;
 	setPivot(x: number, y: number, anchor?: boolean): MaterializedDisplayNodeBase;
+	setScale(x: number, y: number): MaterializedDisplayNodeBase;
+	setSkew(x: number, y: number): MaterializedDisplayNodeBase;
 	setVisible(visible: boolean): MaterializedDisplayNodeBase;
 	setTouchable(touchable: boolean): MaterializedDisplayNodeBase;
 	setGrayed(grayed: boolean): MaterializedDisplayNodeBase;
 	setAlpha(alpha: number): MaterializedDisplayNodeBase;
 	setRotation(rotation: number): MaterializedDisplayNodeBase;
+	setTooltips(tooltips: string): MaterializedDisplayNodeBase;
+	setBlendMode(blendMode: string): MaterializedDisplayNodeBase;
+	setFilter(filter: string): MaterializedDisplayNodeBase;
+	setFilterData(filterData: string): MaterializedDisplayNodeBase;
 	setCustomData(customData: string): MaterializedDisplayNodeBase;
-	setGroup(group: string): MaterializedDisplayNodeBase;
 	setRelations(relations: Array<{ target: string; type: number; usePercent: boolean }>): MaterializedDisplayNodeBase;
 };
 
@@ -79,12 +93,6 @@ export function materializeUamGraphProperties(
 	properties: UamGraphProperties,
 ): void {
 	graph
-		.setLocked(properties.locked)
-		.setMinWidth(properties.minWidth)
-		.setMaxWidth(properties.maxWidth)
-		.setMinHeight(properties.minHeight)
-		.setMaxHeight(properties.maxHeight)
-		.setSkew(properties.skew.x, properties.skew.y)
 		.setGraphType(properties.graphType)
 		.setLineSize(properties.lineSize)
 		.setLineColor(properties.lineColor)
@@ -105,10 +113,6 @@ export function materializeUamTextProperties(
 		.setFont(properties.font)
 		.setFontSize(properties.fontSize)
 		.setColor(properties.color)
-		.setMinWidth(properties.minSize.width)
-		.setMinHeight(properties.minSize.height)
-		.setMaxWidth(properties.maxSize.width)
-		.setMaxHeight(properties.maxSize.height)
 		.setAlign(properties.align)
 		.setVAlign(properties.vAlign)
 		.setLeading(properties.leading)
@@ -139,10 +143,7 @@ export function materializeUamLoaderProperties(
 	properties: UamLoaderProperties,
 ): void {
 	loader
-		.setScale(properties.scale.x, properties.scale.y)
 		.setUrl(properties.url)
-		.setFilter(properties.filter)
-		.setFilterData(properties.filterData)
 		.setFill(properties.fill)
 		.setShrinkOnly(properties.shrinkOnly)
 		.setAutoSize(properties.autoSize)
@@ -157,6 +158,20 @@ export function materializeUamLoaderProperties(
 		.setFillClockwise(properties.fillClockwise)
 		.setFillAmount(properties.fillAmount)
 		.setClearOnPublish(properties.clearOnPublish);
+}
+
+export function materializeUamGroupProperties(
+	group: ReturnType<Document['createGGroup']>,
+	properties: UamGroupProperties,
+): void {
+	group
+		.setLayout(properties.layout)
+		.setLineGap(properties.lineGap)
+		.setColumnGap(properties.columnGap)
+		.setAdvanced(properties.advanced)
+		.setExcludeInvisibles(properties.excludeInvisibles)
+		.setAutoSizeDisabled(properties.autoSizeDisabled)
+		.setMainGridIndex(properties.mainGridIndex);
 }
 
 export function materializeUamListProperties(
@@ -189,6 +204,7 @@ export function materializeUamListProperties(
 		.setClipSoftness(properties.clipSoftness)
 		.setScrollItemToViewOnClick(properties.scrollItemToViewOnClick)
 		.setFoldInvisibleItems(properties.foldInvisibleItems)
+		.setAutoClearItems(properties.autoClearItems)
 		.setListItems(cloneListItems(properties.listItems))
 		.setPageController(properties.pageController)
 		.setControllerOverrides(properties.controllerOverrides)
@@ -221,6 +237,7 @@ export function materializeUamComponentInstanceProperties(
 		.setInstancePromptText('')
 		.setInstanceSelectionController('')
 		.setInstanceVisibleItemCount(0)
+		.setInstanceAutoClearItems(false)
 		.setInstanceValue(0)
 		.setInstanceMax(0)
 		.setInstanceMin(0)
@@ -257,6 +274,7 @@ export function materializeUamComponentInstanceProperties(
 				.setInstanceIcon(properties.icon)
 				.setInstanceVisibleItemCount(properties.visibleItemCount)
 				.setInstanceSelectionController(properties.selectionController)
+				.setInstanceAutoClearItems(properties.autoClearItems)
 				.setInstanceComboItems(properties.items.map((item) => ({ ...item })));
 			return;
 		case 'ProgressBar':
@@ -321,6 +339,7 @@ export function materializeUamComponentProperties(
 		.setWholeNumbers(properties.wholeNumbers)
 		.setChangeOnClick(properties.changeOnClick)
 		.setFixedGripSize(properties.fixedGripSize)
+		.setAutoClearItems(properties.autoClearItems)
 		.setCustomProperties(properties.customProperties);
 }
 
@@ -357,15 +376,29 @@ function materializeDisplayNodeBase<TNode extends UamDisplayNode, TTarget extend
 		.setId(node.id)
 		.setXY(node.position.x, node.position.y)
 		.setSize(node.size.width, node.size.height)
+		.setLocked(node.locked ?? false)
+		.setAspect(node.aspect ?? false)
+		.setMinWidth(node.minSize?.width ?? 0)
+		.setMaxWidth(node.maxSize?.width ?? 0)
+		.setMinHeight(node.minSize?.height ?? 0)
+		.setMaxHeight(node.maxSize?.height ?? 0)
 		.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
+		.setScale(node.scale?.x ?? 1, node.scale?.y ?? 1)
+		.setSkew(node.skew?.x ?? 0, node.skew?.y ?? 0)
 		.setVisible(node.visible)
 		.setTouchable(node.touchable)
 		.setGrayed(node.grayed)
 		.setAlpha(node.alpha)
 		.setRotation(node.rotation)
+		.setTooltips(node.tooltips ?? '')
+		.setBlendMode(node.blendMode ?? 'normal')
+		.setFilter(node.filter ?? '')
+		.setFilterData(node.filterData ?? '')
 		.setCustomData(node.customData)
 		.setRelations(materializeRelations(node.relations));
-	if ('group' in node) target.setGroup(node.group);
+	if ('group' in node) {
+		(target as TTarget & { setGroup(group: string): unknown }).setGroup(node.group);
+	}
 	return target;
 }
 
@@ -432,17 +465,19 @@ function attachAssetSourceData<TResource extends MaterializedSourceDataResource>
 	return asset;
 }
 
-function metadataNumber(resource: Exclude<UamAssetResource, { kind: 'image' }>, key: string, fallback: number): number {
+type UamMetadataAssetResource = Exclude<UamAssetResource, { kind: 'image' | 'movieClip' }>;
+
+function metadataNumber(resource: UamMetadataAssetResource, key: string, fallback: number): number {
 	const value = resource.metadata?.[key];
 	return typeof value === 'number' ? value : fallback;
 }
 
-function metadataBoolean(resource: Exclude<UamAssetResource, { kind: 'image' }>, key: string, fallback: boolean): boolean {
+function metadataBoolean(resource: UamMetadataAssetResource, key: string, fallback: boolean): boolean {
 	const value = resource.metadata?.[key];
 	return typeof value === 'boolean' ? value : fallback;
 }
 
-function metadataStringArray(resource: Exclude<UamAssetResource, { kind: 'image' }>, key: string): string[] {
+function metadataStringArray(resource: UamMetadataAssetResource, key: string): string[] {
 	const value = resource.metadata?.[key];
 	return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
@@ -462,6 +497,27 @@ export function materializeUamImageResourceProperties(
 		.setTileGridIndice(properties.tileGridIndice);
 }
 
+export function materializeUamMovieClipResourceProperties(
+	doc: Document,
+	movieClip: ReturnType<Document['createMovieClipResource']>,
+	properties: UamMovieClipResourceProperties,
+): void {
+	const frames = properties.frames.map((frame, index) => doc.createMovieFrame(`${movieClip.getId()}_${index}`)
+		.setRectX(frame.rectX)
+		.setRectY(frame.rectY)
+		.setRectWidth(frame.rectWidth)
+		.setRectHeight(frame.rectHeight)
+		.setAddDelay(frame.addDelay)
+		.setSpriteId(frame.spriteId));
+	movieClip
+		.setInterval(properties.interval)
+		.setRepeatDelay(properties.repeatDelay)
+		.setSwing(properties.swing)
+		.setSmoothing(properties.smoothing);
+	for (const frame of movieClip.listFrames()) movieClip.removeFrame(frame);
+	for (const frame of frames) movieClip.addFrame(frame);
+}
+
 export function materializeAssetResource(doc: Document, resource: UamAssetResource) {
 	ensureSupportedResourceKind(resource.kind);
 	if (resource.kind === 'image') {
@@ -475,12 +531,16 @@ export function materializeAssetResource(doc: Document, resource: UamAssetResour
 	if (resource.kind === 'movieClip') {
 		const movieClip = materializeAssetBase(doc.createMovieClipResource(resource.name), resource)
 			.setWidth(resource.dimensions?.width ?? 0)
-			.setHeight(resource.dimensions?.height ?? 0)
-			.setInterval(metadataNumber(resource, 'interval', 0))
-			.setSwing(metadataBoolean(resource, 'swing', false))
-			.setRepeatDelay(metadataNumber(resource, 'repeatDelay', 0))
-			.setSmoothing(metadataBoolean(resource, 'smoothing', true));
+			.setHeight(resource.dimensions?.height ?? 0);
 		if (resource.fileName) movieClip.setFileName(resource.fileName);
+		materializeUamMovieClipResourceProperties(doc, movieClip, resource.movieClip);
+		if (resource.sourceBytes instanceof Uint8Array) {
+			try {
+				applyDerivedMovieClipModel(doc, movieClip, deriveMovieClipModelFromJta(resource.sourceBytes));
+			} catch {
+				// Keep the stored model when source bytes cannot be derived.
+			}
+		}
 		return attachAssetSourceData(doc, movieClip, resource);
 	}
 	if (resource.kind === 'sound') {
@@ -532,20 +592,9 @@ export function materializeDisplayNode(
 
 	if (node.kind === 'image') {
 		const imageNode = node as UamImageNode;
-		const image = doc.createGImage(node.name)
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData)
+		const image = materializeDisplayNodeBase(doc.createGImage(node.name), node)
 			.setGroup(imageNode.group)
 			.setSrc(imageNode.resource.resourceId);
-		image.setRelations(materializeRelations(node.relations));
 		return image;
 	}
 
@@ -556,17 +605,7 @@ export function materializeDisplayNode(
 			: node.kind === 'textInput'
 				? doc.createGTextInput(node.name)
 				: doc.createGTextField(node.name);
-		text
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData)
+		materializeDisplayNodeBase(text, node)
 			.setGroup(textNode.group);
 		materializeUamTextProperties(text, textNode);
 		if (node.kind === 'textInput') {
@@ -578,127 +617,55 @@ export function materializeDisplayNode(
 				.setPassword(inputNode.password)
 				.setKeyboardType(inputNode.keyboardType);
 		}
-		text.setRelations(materializeRelations(node.relations));
 		return text;
 	}
 
 	if (node.kind === 'component') {
 		const componentNode = node as UamComponentRefNode;
-		const component = doc.createGComponent(node.name)
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData)
+		const component = materializeDisplayNodeBase(doc.createGComponent(node.name), node)
 			.setGroup(componentNode.group)
 			.setSrc(componentNode.resource.resourceId)
-			.setPackageId(componentNode.resource.packageId ?? '');
+			.setPackageId(componentNode.resource.packageId ?? '')
+			.setPropertyOverrides((componentNode.propertyOverrides ?? []).map((property) => ({ ...property })));
 		materializeUamComponentInstanceProperties(component, componentNode.instanceProperties);
-		component.setRelations(materializeRelations(node.relations));
 		return component;
 	}
 
 	if (node.kind === 'list' || node.kind === 'tree') {
 		const listNode = node as UamListNode | UamTreeNode;
 		const list = node.kind === 'tree' ? doc.createGTree(node.name) : doc.createGList(node.name);
-		list
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData)
+		materializeDisplayNodeBase(list, node)
 			.setGroup(listNode.group);
 		materializeUamListProperties(list, listNode);
-		list.setRelations(materializeRelations(node.relations));
 		return list;
 	}
 
 	if (node.kind === 'graph') {
 		const graphNode = node as UamGraphNode;
-		const graph = doc.createGGraph(node.name)
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(graphNode.pivot.x, graphNode.pivot.y, graphNode.pivotAsAnchor)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData)
+		const graph = materializeDisplayNodeBase(doc.createGGraph(node.name), node)
 			.setGroup(graphNode.group);
 		materializeUamGraphProperties(graph, graphNode);
-		graph.setRelations(materializeRelations(node.relations));
 		return graph;
 	}
 
 	if (node.kind === 'group') {
 		const groupNode = node as UamGroupNode;
-		const group = doc.createGGroup(node.name)
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
-			.setLocked(groupNode.locked)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData)
-			.setGroup(groupNode.group)
-			.setLayout(groupNode.layout)
-			.setLineGap(groupNode.lineGap)
-			.setColumnGap(groupNode.columnGap)
-			.setAdvanced(groupNode.advanced)
-			.setExcludeInvisibles(groupNode.excludeInvisibles)
-			.setAutoSizeDisabled(groupNode.autoSizeDisabled)
-			.setMainGridIndex(groupNode.mainGridIndex);
-		group.setRelations(materializeRelations(node.relations));
+		const group = materializeDisplayNodeBase(doc.createGGroup(node.name), node)
+			.setGroup(groupNode.group);
+		materializeUamGroupProperties(group, groupNode);
 		return group;
 	}
 
 	if (node.kind === 'loader') {
 		const loaderNode = node as UamLoaderNode;
-		const loader = doc.createGLoader(node.name)
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(loaderNode.pivot.x, loaderNode.pivot.y, loaderNode.pivotAsAnchor ?? false)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData);
+		const loader = materializeDisplayNodeBase(doc.createGLoader(node.name), node);
 		materializeUamLoaderProperties(loader, loaderNode);
-		loader.setRelations(materializeRelations(node.relations));
 		return loader;
 	}
 
 	if (node.kind === 'loader3D') {
 		const loaderNode = node as UamLoader3DNode;
-		const loader = doc.createGLoader3D(node.name)
-			.setId(node.id)
-			.setXY(node.position.x, node.position.y)
-			.setSize(node.size.width, node.size.height)
-			.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
-			.setVisible(node.visible)
-			.setTouchable(node.touchable)
-			.setGrayed(node.grayed)
-			.setAlpha(node.alpha)
-			.setRotation(node.rotation)
-			.setCustomData(node.customData)
+		const loader = materializeDisplayNodeBase(doc.createGLoader3D(node.name), node)
 			.setUrl(loaderNode.url)
 			.setFill(loaderNode.fill)
 			.setShrinkOnly(loaderNode.shrinkOnly)
@@ -712,7 +679,6 @@ export function materializeDisplayNode(
 			.setLoop(loaderNode.loop)
 			.setColor(loaderNode.color)
 			.setClearOnPublish(loaderNode.clearOnPublish);
-		loader.setRelations(materializeRelations(node.relations));
 		return loader;
 	}
 
@@ -775,27 +741,14 @@ export function materializeDisplayNode(
 	}
 
 	const movieClipNode = node as UamMovieClipNode;
-	const movieClip = doc.createGMovieClip(node.name)
-		.setId(node.id)
-		.setXY(node.position.x, node.position.y)
-		.setSize(node.size.width, node.size.height)
-		.setPivot(node.pivot?.x ?? 0, node.pivot?.y ?? 0, node.pivotAsAnchor ?? false)
-		.setVisible(node.visible)
-		.setTouchable(node.touchable)
-		.setGrayed(node.grayed)
-		.setAlpha(node.alpha)
-		.setRotation(node.rotation)
-		.setCustomData(node.customData)
+	const movieClip = materializeDisplayNodeBase(doc.createGMovieClip(node.name), node)
 		.setGroup(movieClipNode.group)
 		.setSrc(movieClipNode.resource.resourceId)
 		.setPackageId(movieClipNode.resource.packageId ?? '')
 		.setFileName(movieClipNode.fileName)
-		.setFilter(movieClipNode.filter)
-		.setFilterData(movieClipNode.filterData)
 		.setPlaying(movieClipNode.playing)
 		.setFrame(movieClipNode.frame)
 		.setColor(movieClipNode.color);
-	movieClip.setRelations(materializeRelations(node.relations));
 	return movieClip;
 }
 
@@ -1124,7 +1077,13 @@ export function materializeUamProject(project: UamProject): Document {
 		.setSettings(cloneSettings(project.settings));
 
 	for (const pkgSpec of project.packages) {
-		const pkg = doc.createPackage(pkgSpec.name).setId(pkgSpec.id);
+		const pkg = doc.createPackage(pkgSpec.name)
+			.setId(pkgSpec.id)
+			.setCompressPNG(pkgSpec.compressPNG)
+			.setJpegQuality(pkgSpec.jpegQuality)
+			.setBranchNames(pkgSpec.branchNames)
+			.setResourceFolders(pkgSpec.folders);
+		pkg.setExtras({ ...pkg.getExtras(), _preservePackageResourceOrder: true });
 		if (pkgSpec.publish) {
 			pkg
 				.setPublishName(pkgSpec.publish.name)
@@ -1132,7 +1091,19 @@ export function materializeUamProject(project: UamProject): Document {
 				.setPublishBranchPath(pkgSpec.publish.branchPath)
 				.setPublishPackageCount(pkgSpec.publish.packageCount)
 				.setGenCode(pkgSpec.publish.genCode)
-				.setCodePath(pkgSpec.publish.codePath);
+				.setCodePath(pkgSpec.publish.codePath)
+				.setSourceAtlasSettings({
+					useGlobal: pkgSpec.publish.useGlobalAtlasSettings,
+					maxSize: pkgSpec.publish.maxAtlasSize,
+					sizeOption: pkgSpec.publish.sizeOption,
+					forceSquare: pkgSpec.publish.forceSquare,
+					allowRotation: pkgSpec.publish.allowRotation,
+					paging: pkgSpec.publish.paging,
+					extractAlpha: pkgSpec.publish.extractAlpha,
+					maxIndex: pkgSpec.publish.maxAtlasIndex,
+					atlases: pkgSpec.publish.atlases,
+					excludedResourceIds: pkgSpec.publish.excludedResourceIds,
+				});
 		}
 		for (const resource of pkgSpec.resources) {
 			if (resource.kind === 'component') {

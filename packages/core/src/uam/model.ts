@@ -49,13 +49,46 @@ export interface UamPackagePublish {
 	packageCount: number;
 	genCode: boolean;
 	codePath: string;
+	useGlobalAtlasSettings: boolean;
+	maxAtlasSize: number;
+	sizeOption: 'pot' | 'npot' | 'mof';
+	forceSquare: boolean;
+	allowRotation: boolean;
+	paging: boolean;
+	extractAlpha: boolean;
+	maxAtlasIndex: number;
+	atlases: UamPackagePublishAtlas[];
+	excludedResourceIds: string[];
+}
+
+export interface UamPackagePublishAtlas {
+	index: number;
+	name: string;
+	compression: boolean;
+}
+
+export interface UamPackageSettings {
+	compressPNG: boolean | null;
+	jpegQuality: number | null;
+	publish: UamPackagePublish | null;
 }
 
 export interface UamPackage {
 	id: string;
 	name: string;
+	compressPNG: boolean | null;
+	jpegQuality: number | null;
 	publish: UamPackagePublish | null;
+	branchNames: string[];
+	folders: UamResourceFolder[];
 	resources: UamResource[];
+}
+
+export interface UamResourceFolder {
+	branch: string;
+	path: string;
+	favorite: boolean;
+	atlas: string;
 }
 
 export type UamResource =
@@ -109,8 +142,32 @@ export interface UamImageResource extends UamAssetResourceBase {
 	image: UamImageResourceProperties;
 }
 
+export interface UamMovieClipFrame {
+	rectX: number;
+	rectY: number;
+	rectWidth: number;
+	rectHeight: number;
+	addDelay: number;
+	spriteId: string;
+}
+
+export interface UamMovieClipResourceProperties {
+	interval: number;
+	repeatDelay: number;
+	swing: boolean;
+	smoothing: boolean;
+	frames: UamMovieClipFrame[];
+}
+
+export interface UamMovieClipResource extends UamAssetResourceBase {
+	kind: 'movieClip';
+	fileName?: string;
+	dimensions: UamDimensions;
+	movieClip: UamMovieClipResourceProperties;
+}
+
 export interface UamGenericAssetResource extends UamAssetResourceBase {
-	kind: Exclude<UamAssetResourceKind, 'image'>;
+	kind: Exclude<UamAssetResourceKind, 'image' | 'movieClip'>;
 	fileName?: string;
 	file?: string;
 	dimensions?: UamDimensions | null;
@@ -119,6 +176,7 @@ export interface UamGenericAssetResource extends UamAssetResourceBase {
 
 export type UamAssetResource =
 	| UamImageResource
+	| UamMovieClipResource
 	| UamGenericAssetResource;
 
 export interface UamComponentResource {
@@ -146,6 +204,12 @@ export interface UamComponentCustomProperty {
 	target: string;
 	propertyId: 0 | 1;
 	label: string;
+}
+
+export interface UamComponentPropertyOverride {
+	target: string;
+	propertyId: number;
+	value: string;
 }
 
 export interface UamComponentProperties {
@@ -190,6 +254,7 @@ export interface UamComponentProperties {
 	wholeNumbers: boolean;
 	changeOnClick: boolean;
 	fixedGripSize: boolean;
+	autoClearItems: boolean;
 	customProperties: UamComponentCustomProperty[];
 }
 
@@ -228,6 +293,7 @@ export type UamComponentInstanceProperties =
 		icon: string;
 		visibleItemCount: number;
 		selectionController: string;
+		autoClearItems: boolean;
 		items: UamComponentInstanceComboItem[];
 	}
 	| {
@@ -260,19 +326,31 @@ export type UamDisplayNodeKind =
 	| 'slider'
 	| 'scrollBar';
 
-interface UamDisplayNodeBase {
+export type UamBlendMode = 'normal' | 'none' | 'add' | 'multiply' | 'screen' | 'erase';
+
+export interface UamDisplayNodeBase {
 	kind: UamDisplayNodeKind;
 	id: string;
 	name: string;
 	position: UamPoint;
 	size: UamSize;
+	locked: boolean;
+	aspect: boolean;
+	minSize: UamSize;
+	maxSize: UamSize;
 	pivot?: UamPoint;
 	pivotAsAnchor?: boolean;
+	scale: UamPoint;
+	skew: UamPoint;
 	visible: boolean;
 	touchable: boolean;
 	grayed: boolean;
 	alpha: number;
 	rotation: number;
+	tooltips: string;
+	blendMode: UamBlendMode;
+	filter: string;
+	filterData: string;
 	customData: string;
 	relations: UamRelation[];
 	gears: UamGearBinding[];
@@ -292,8 +370,6 @@ export interface UamTextProperties {
 	font: string;
 	fontSize: number;
 	color: string;
-	minSize: UamSize;
-	maxSize: UamSize;
 	align: number;
 	vAlign: number;
 	leading: number;
@@ -340,6 +416,7 @@ export interface UamComponentRefNode extends UamGroupableDisplayNodeBase {
 	kind: 'component';
 	resource: UamResourceRef;
 	instanceProperties?: UamComponentInstanceProperties;
+	propertyOverrides?: UamComponentPropertyOverride[];
 }
 
 export interface UamListItemData {
@@ -352,6 +429,7 @@ export interface UamListItemData {
 	level: number;
 	isFolder: boolean | null;
 	controllers?: string | null;
+	propertyOverrides?: UamComponentPropertyOverride[];
 }
 
 export interface UamListProperties {
@@ -380,6 +458,7 @@ export interface UamListProperties {
 	clipSoftness: UamPoint;
 	scrollItemToViewOnClick: boolean;
 	foldInvisibleItems: boolean;
+	autoClearItems: boolean;
 	listItems: UamListItemData[];
 	pageController: string;
 	controllerOverrides: string;
@@ -401,12 +480,6 @@ export interface UamTreeNode extends UamGroupableDisplayNodeBase, UamTreePropert
 }
 
 export interface UamGraphProperties {
-	locked: boolean;
-	minWidth: number;
-	maxWidth: number;
-	minHeight: number;
-	maxHeight: number;
-	skew: UamPoint;
 	graphType: number;
 	lineSize: number;
 	lineColor: string;
@@ -424,9 +497,7 @@ export interface UamGraphNode extends UamGroupableDisplayNodeBase, UamGraphPrope
 	pivotAsAnchor: boolean;
 }
 
-export interface UamGroupNode extends UamGroupableDisplayNodeBase {
-	kind: 'group';
-	locked: boolean;
+export interface UamGroupProperties {
 	layout: number;
 	lineGap: number;
 	columnGap: number;
@@ -436,11 +507,12 @@ export interface UamGroupNode extends UamGroupableDisplayNodeBase {
 	mainGridIndex: number;
 }
 
+export interface UamGroupNode extends UamGroupableDisplayNodeBase, UamGroupProperties {
+	kind: 'group';
+}
+
 export interface UamLoaderProperties {
-	scale: UamPoint;
 	url: string;
-	filter: string;
-	filterData: string;
 	fill: number;
 	shrinkOnly: boolean;
 	autoSize: boolean;
@@ -486,8 +558,6 @@ export interface UamMovieClipNode extends UamGroupableDisplayNodeBase {
 	kind: 'movieClip';
 	resource: UamResourceRef;
 	fileName: string;
-	filter: string;
-	filterData: string;
 	playing: boolean;
 	frame: number;
 	color: string;

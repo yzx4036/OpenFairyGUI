@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getFixturePath } from '@openfairygui/test-utils';
-import { Document, PropertyType } from '../src/index.js';
+import { Document, liftDocumentToUamProject, materializeUamProject, PropertyType } from '../src/index.js';
 import { NodeIO } from '../src/node.js';
 
 const BASICS_FUI = getFixturePath(
@@ -1175,6 +1175,7 @@ test('binary writer: branch metadata round-trips as package-level branches and i
 
 		const pkg2 = roundTripped.getRoot().getPackage('BranchPkg');
 		t.truthy(pkg2, 'BranchPkg exists after round-trip');
+		t.deepEqual(pkg2!.listBranchNames(), ['dev']);
 
 		const mainComponent2 = pkg2!.listResources().find((resource) => resource.getId?.() === 'mainComp') as any;
 		const devComponent2 = pkg2!.listResources().find((resource) => resource.getId?.() === 'devComp') as any;
@@ -1192,6 +1193,47 @@ test('binary writer: branch metadata round-trips as package-level branches and i
 		t.deepEqual(mainImage2.getBranchItemIds?.(), ['devFace']);
 		t.is(devImage2.getBranch?.(), 'dev');
 		t.deepEqual(devImage2.getBranchItemIds?.(), []);
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('binary writer: each package owns its branch item id order', async (t) => {
+	const doc = new Document();
+	doc.getRoot().setBranches(['desktop', 'mobile']);
+
+	const addPackage = (
+		name: string,
+		id: string,
+		branchNames: string[],
+		branchItemIds: string[],
+	) => {
+		const pkg = doc.createPackage(name).setId(id).setBranchNames(branchNames);
+		pkg.addResource(doc.createImageResource('icon.png').setId(`${id}Main`).setBranchItemIds(branchItemIds));
+		for (const [index, branchName] of branchNames.entries()) {
+			pkg.addResource(doc.createImageResource('icon.png').setId(branchItemIds[index]!).setBranch(branchName));
+		}
+	};
+	addPackage('MobileFirst', 'mobile01', ['mobile', 'desktop'], ['mobileIcon', 'desktopIcon']);
+	addPackage('DesktopFirst', 'desktop1', ['desktop', 'mobile'], ['desktopLogo', 'mobileLogo']);
+	const bridged = materializeUamProject(liftDocumentToUamProject(doc));
+	t.deepEqual(bridged.getRoot().getPackage('MobileFirst')?.listBranchNames(), ['mobile', 'desktop']);
+	t.deepEqual(bridged.getRoot().getPackage('DesktopFirst')?.listBranchNames(), ['desktop', 'mobile']);
+
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-bw-'));
+	try {
+		for (const [packageIndex, expectedNames, expectedIds] of [
+			[0, ['mobile', 'desktop'], ['mobileIcon', 'desktopIcon']],
+			[1, ['desktop', 'mobile'], ['desktopLogo', 'mobileLogo']],
+		] as const) {
+			const outPath = path.join(tmpDir, `package-${packageIndex}.bytes`);
+			await io.writeBinary(doc, outPath, { packageIndex });
+			const roundTripped = await io.readBinary(outPath);
+			const pkg = roundTripped.getRoot().listPackages()[0]!;
+			t.deepEqual(pkg.listBranchNames(), [...expectedNames]);
+			t.deepEqual(pkg.listResources().find((resource) => !resource.getBranch?.())?.getBranchItemIds?.(), [...expectedIds]);
+		}
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}
@@ -1777,6 +1819,10 @@ test('binary writer: component child blocks round-trip into formal child propert
 		.setSrc('ui://childpkg/hero')
 		.setXY(30, 40)
 		.setSize(120, 90)
+		.setMinWidth(20)
+		.setMaxWidth(200)
+		.setMinHeight(10)
+		.setMaxHeight(180)
 		.setScale(1.5, 0.75)
 		.setSkew(2, -3)
 		.setPivot(0.25, 0.5, true)
@@ -1786,6 +1832,9 @@ test('binary writer: component child blocks round-trip into formal child propert
 		.setGrayed(true)
 		.setCustomData('hero-meta')
 		.setTooltips('hero-tip')
+		.setBlendMode('multiply')
+		.setFilter('color')
+		.setFilterData('1,0.5,0.25,1')
 		.setGroup(group.getId())
 		.setColor('#336699')
 		.setFlip(2)
@@ -1870,6 +1919,10 @@ test('binary writer: component child blocks round-trip into formal child propert
 		t.is(typedImage.getY(), 40);
 		t.is(typedImage.getWidth(), 120);
 		t.is(typedImage.getHeight(), 90);
+		t.is(typedImage.getMinWidth(), 20);
+		t.is(typedImage.getMaxWidth(), 200);
+		t.is(typedImage.getMinHeight(), 10);
+		t.is(typedImage.getMaxHeight(), 180);
 		t.is(typedImage.getScaleX(), 1.5);
 		t.is(typedImage.getScaleY(), 0.75);
 		t.is(typedImage.getSkewX(), 2);
@@ -1883,6 +1936,9 @@ test('binary writer: component child blocks round-trip into formal child propert
 		t.true(typedImage.getGrayed());
 		t.is(typedImage.getCustomData(), 'hero-meta');
 		t.is(typedImage.getTooltips(), 'hero-tip');
+		t.is(typedImage.getBlendMode(), 'multiply');
+		t.is(typedImage.getFilter(), 'color');
+		t.is(typedImage.getFilterData(), '1,0.5,0.25,1');
 		t.is(typedImage.getGroup(), 'group01');
 		t.is(typedImage.getColor(), '#336699');
 		t.is(typedImage.getFlip(), 2);
@@ -1933,6 +1989,11 @@ test('binary writer: component child blocks round-trip into formal child propert
 		t.is(typedButton.getSelectedIcon(), 'ui://childpkg/iconB');
 		t.is(typedButton.getTitleColor(), '#AA5500');
 		t.is(typedButton.getTitleFontSize(), 22);
+
+		image.setFilter('blur');
+		await t.throwsAsync(() => io.writeBinary(doc, outPath), { message: /unsupported filter "blur"/ });
+		image.setFilter('').setBlendMode('overlay');
+		await t.throwsAsync(() => io.writeBinary(doc, outPath), { message: /unsupported blend mode "overlay"/ });
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}

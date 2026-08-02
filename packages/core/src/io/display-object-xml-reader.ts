@@ -2,6 +2,7 @@ import { GearType, type RelationDef } from '../constants.js';
 import type { Document } from '../document.js';
 import type { Controller } from '../properties/controller.js';
 import type { GObject } from '../properties/g-object.js';
+import type { GComponentPropertyOverride } from '../properties/g-component.js';
 import {
 	ensureArray,
 	parseBool,
@@ -124,6 +125,13 @@ interface ListItemXmlNode extends XmlNode {
 	level?: string | number;
 	isFolder?: string | boolean;
 	controllers?: string;
+	property?: PropertyOverrideXmlNode | PropertyOverrideXmlNode[];
+}
+
+interface PropertyOverrideXmlNode extends XmlNode {
+	target?: string;
+	propertyId?: string | number;
+	value?: string | number | boolean;
 }
 
 interface ComboItemXmlNode extends XmlNode {
@@ -154,6 +162,7 @@ interface ExtensionXmlNode extends Record<string, unknown> {
 	page?: string;
 	checked?: string | boolean;
 	visibleItemCount?: string | number;
+	autoClearItems?: string | boolean;
 	value?: string | number;
 	max?: string | number;
 	min?: string | number;
@@ -248,7 +257,13 @@ export interface DisplayObjectXmlNode extends Record<string, unknown> {
 	visible?: string | boolean;
 	touchable?: string | boolean;
 	grayed?: string | boolean;
+	locked?: string | boolean;
+	aspect?: string | boolean;
+	restrictSize?: string;
 	tooltips?: string;
+	blend?: string;
+	filter?: string;
+	filterData?: string;
 	customData?: string;
 	group?: string;
 	advanced?: string | boolean;
@@ -281,6 +296,27 @@ function getXmlNode<T extends XmlNode>(value: unknown): T | null {
 
 function getProtocolChildName(protocol: XmlNodeProtocol, childName: string): string | null {
 	return protocol.children?.[childName] ? childName : null;
+}
+
+function parsePropertyOverrides(source: XmlNode, protocol: XmlNodeProtocol): GComponentPropertyOverride[] {
+	const childName = getProtocolChildName(protocol, 'property');
+	if (!childName) return [];
+	return ensureArray(source[childName]).map((raw, index) => {
+		const property = getXmlNode<PropertyOverrideXmlNode>(raw);
+		const specs = PROJECT_XML_PROTOCOL.propertyOverride.attrs;
+		const target = property ? readXmlAttr<string>(property, specs.target) : undefined;
+		const rawPropertyId = property ? readXmlAttr<string | number>(property, specs.propertyId) : undefined;
+		const propertyId = typeof rawPropertyId === 'number'
+			? rawPropertyId
+			: typeof rawPropertyId === 'string' && /^\d+$/.test(rawPropertyId)
+				? Number(rawPropertyId)
+				: Number.NaN;
+		const value = property ? readXmlAttr<string | number | boolean>(property, specs.value) : undefined;
+		if (!target || !Number.isSafeInteger(propertyId) || propertyId < 0 || value === undefined) {
+			throw new Error(`Invalid property override at ${childName}[${index}].`);
+		}
+		return { target, propertyId, value: String(value) };
+	});
 }
 
 function getProtocolGearChildNames(protocol: XmlNodeProtocol): string[] {
@@ -358,10 +394,12 @@ function parseListItemXmlNode(item: ListItemXmlNode): {
 	level: number;
 	isFolder: boolean | null;
 	controllers?: string | null;
+	propertyOverrides?: GComponentPropertyOverride[];
 } {
 	const specs = PROJECT_XML_PROTOCOL.listItem.attrs;
 	const isFolder = readXmlAttr<string | boolean>(item, specs.isFolder);
 	const controllers = readXmlAttr<string>(item, specs.controllers);
+	const propertyOverrides = parsePropertyOverrides(item, PROJECT_XML_PROTOCOL.listItem);
 	return {
 		title: readXmlAttr<string>(item, specs.title) ?? null,
 		icon: readXmlAttr<string>(item, specs.icon) ?? null,
@@ -372,6 +410,7 @@ function parseListItemXmlNode(item: ListItemXmlNode): {
 		level: parseInt2(readXmlAttr<string | number>(item, specs.level)),
 		isFolder: isFolder !== undefined ? parseBool(isFolder) : null,
 		...(controllers !== undefined ? { controllers } : {}),
+		...(propertyOverrides.length > 0 ? { propertyOverrides } : {}),
 	};
 }
 
@@ -389,6 +428,9 @@ function parseComboBoxItemXmlNode(item: ComboItemXmlNode): {
 }
 
 type WritableCommonDisplayState = GObject & {
+	setXY?(x: number, y: number): unknown;
+	setSize?(width: number, height: number): unknown;
+	setGroup?(group: string): unknown;
 	setAlpha?(value: number): unknown;
 	setRotation?(value: number): unknown;
 	setVisible?(value: boolean): unknown;
@@ -402,6 +444,57 @@ function readCommonDisplayState(
 	protocol: XmlNodeProtocol,
 ): void {
 	const specs = protocol.attrs;
+	const xy = specs.xy ? readXmlAttr<string>(source, specs.xy) : undefined;
+	if (xy) {
+		const [x, y] = parseXYString(xy);
+		object.setXY?.(x, y);
+	}
+
+	const size = specs.size ? readXmlAttr<string>(source, specs.size) : undefined;
+	if (size) {
+		const [width, height] = parseSizeString(size);
+		object.setSize?.(width, height);
+	}
+
+	const locked = specs.locked ? readXmlAttr<string | boolean>(source, specs.locked) : undefined;
+	if (locked !== undefined) object.setLocked(parseBool(locked));
+
+	const restrictSize = specs.restrictSize ? readXmlAttr<string>(source, specs.restrictSize) : undefined;
+	if (restrictSize) {
+		const [minWidth = 0, maxWidth = 0, minHeight = 0, maxHeight = 0] = restrictSize
+			.split(',')
+			.map((value) => parseFloat2(value));
+		object
+			.setMinWidth(minWidth)
+			.setMaxWidth(maxWidth)
+			.setMinHeight(minHeight)
+			.setMaxHeight(maxHeight);
+	}
+
+	const aspect = specs.aspect ? readXmlAttr<string | boolean>(source, specs.aspect) : undefined;
+	if (aspect !== undefined) object.setAspect(parseBool(aspect));
+
+	const pivot = specs.pivot ? readXmlAttr<string>(source, specs.pivot) : undefined;
+	if (pivot) {
+		const [pivotX, pivotY] = parseXYString(pivot);
+		const anchor = specs.anchor ? readXmlAttr<string | boolean>(source, specs.anchor) : undefined;
+		object.setPivot(pivotX, pivotY, parseBool(anchor));
+	}
+
+	const scale = specs.scale ? readXmlAttr<string>(source, specs.scale) : undefined;
+	if (scale) {
+		const [scaleX, scaleY] = parseXYString(scale);
+		object.setScale(scaleX, scaleY);
+	}
+
+	const skew = specs.skew ? readXmlAttr<string>(source, specs.skew) : undefined;
+	if (skew) {
+		const [skewX, skewY] = parseXYString(skew);
+		object.setSkew(skewX, skewY);
+	}
+
+	const group = specs.group ? readXmlAttr<string>(source, specs.group) : undefined;
+	if (group !== undefined) object.setGroup?.(group);
 	const alpha = specs.alpha
 		? readXmlAttr<string | number>(source, specs.alpha)
 		: undefined;
@@ -426,6 +519,20 @@ function readCommonDisplayState(
 		? readXmlAttr<string | boolean>(source, specs.grayed)
 		: undefined;
 	if (grayed !== undefined) object.setGrayed?.(parseBool(grayed));
+
+	const tooltips = specs.tooltips ? readXmlAttr<string>(source, specs.tooltips) : undefined;
+	if (tooltips !== undefined) object.setTooltips(tooltips);
+
+	const customData = specs.customData ? readXmlAttr<string>(source, specs.customData) : undefined;
+	if (customData !== undefined) object.setCustomData(customData);
+
+	const blendMode = specs.blendMode ? readXmlAttr<string>(source, specs.blendMode) : undefined;
+	if (blendMode !== undefined) object.setBlendMode(blendMode);
+
+	const filter = specs.filter ? readXmlAttr<string>(source, specs.filter) : undefined;
+	if (filter !== undefined) object.setFilter(filter);
+	const filterData = specs.filterData ? readXmlAttr<string>(source, specs.filterData) : undefined;
+	if (filterData !== undefined) object.setFilterData(filterData);
 }
 
 /** Options for explicitly loading source bytes while reading a project. */
@@ -1366,6 +1473,8 @@ export function createDisplayObject(
 					PROJECT_XML_PROTOCOL.list.attrs.foldInvisibleItems,
 				);
 				if (foldInvisibleItems !== undefined) g.setFoldInvisibleItems?.(parseBool(foldInvisibleItems));
+				const autoClearItems = readXmlAttr<string | boolean>(attrs, PROJECT_XML_PROTOCOL.list.attrs.autoClearItems);
+				if (autoClearItems !== undefined) g.setAutoClearItems?.(parseBool(autoClearItems));
 				// Parse static list items
 				const listItemChildName = getProtocolChildName(PROJECT_XML_PROTOCOL.list, 'item');
 				const items = listItemChildName ? ensureArray(attrs[listItemChildName]) : [];
@@ -1416,6 +1525,10 @@ export function createDisplayObject(
 				obj.addRelation(rel);
 			}
 		}
+		if (obj.propertyType === 'GComponent') {
+			(obj as ReturnType<Document['createGComponent']>)
+				.setPropertyOverrides(parsePropertyOverrides(attrs, PROJECT_XML_PROTOCOL.componentInstance));
+		}
 
 		// Parse extension overlay data for child component instances
 		// e.g. <component id="n18" src="rpmb10"><Button title="点我" icon="..."/></component>
@@ -1456,6 +1569,8 @@ export function createDisplayObject(
 				if (selectionController !== undefined) componentObj.setInstanceSelectionController?.(selectionController);
 				const visibleItemCount = extSpecs.visibleItemCount ? readXmlAttr<string | number>(extAttrs, extSpecs.visibleItemCount) : undefined;
 				if (visibleItemCount !== undefined) componentObj.setInstanceVisibleItemCount?.(parseInt2(visibleItemCount));
+				const autoClearItems = extSpecs.autoClearItems ? readXmlAttr<string | boolean>(extAttrs, extSpecs.autoClearItems) : undefined;
+				if (autoClearItems !== undefined) componentObj.setInstanceAutoClearItems?.(parseBool(autoClearItems));
 				const value = extSpecs.value ? readXmlAttr<string | number>(extAttrs, extSpecs.value) : undefined;
 				if (value !== undefined) componentObj.setInstanceValue?.(parseInt2(value));
 				const max = extSpecs.max ? readXmlAttr<string | number>(extAttrs, extSpecs.max) : undefined;

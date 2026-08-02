@@ -8,18 +8,21 @@ import type {
 	UamDisplayNode,
 	UamGearBinding,
 	UamGraphProperties,
+	UamGroupProperties,
 	UamImageResourceProperties,
 	UamListProperties,
 	UamLoaderProperties,
 	UamLoader3DProperties,
 	UamLookGearBinding,
 	UamPackage,
+	UamPackageSettings,
 	UamPlainTextProperties,
 	UamProject,
 	UamTextProperties,
 	UamTreeProperties,
 	UamValidationIssue,
 } from './model.js';
+import type { ProjectSettings } from '../types/settings.js';
 import type { UAM_SUPPORTED_TRANSACTION_SCOPE } from './model.js';
 
 export interface UamResourceSelector {
@@ -29,6 +32,11 @@ export interface UamResourceSelector {
 
 export interface UamPackageSelector {
 	packageId: string;
+}
+
+export interface UamResourceFolderSelector extends UamPackageSelector {
+	branch?: string;
+	path: string;
 }
 
 export interface UamComponentSelector {
@@ -61,13 +69,23 @@ export interface UamGearSelector extends UamDisplayNodeSelector {
 export interface UamDisplayNodePropsUpdate {
 	position?: UamDisplayNode['position'];
 	size?: UamDisplayNode['size'];
+	locked?: boolean;
+	aspect?: boolean;
+	minSize?: UamDisplayNode['minSize'];
+	maxSize?: UamDisplayNode['maxSize'];
 	pivot?: NonNullable<UamDisplayNode['pivot']>;
 	pivotAsAnchor?: boolean;
+	scale?: UamDisplayNode['scale'];
+	skew?: UamDisplayNode['skew'];
 	visible?: boolean;
 	touchable?: boolean;
 	grayed?: boolean;
 	alpha?: number;
 	rotation?: number;
+	tooltips?: string;
+	blendMode?: UamDisplayNode['blendMode'];
+	filter?: string;
+	filterData?: string;
 	customData?: string;
 	group?: string;
 	text?: string;
@@ -76,6 +94,7 @@ export interface UamDisplayNodePropsUpdate {
 	color?: string;
 	textProperties?: UamTextProperties | UamPlainTextProperties;
 	graphProperties?: UamGraphProperties;
+	groupProperties?: UamGroupProperties;
 	loaderProperties?: UamLoaderProperties;
 	listProperties?: UamListProperties | UamTreeProperties;
 	loader3DProperties?: UamLoader3DProperties;
@@ -87,6 +106,17 @@ type UamAttachableDisplayNode = Extract<UamDisplayNode, { kind: UamTransactionDi
 
 interface UamTransactionOperationBase {
 	opId?: string;
+}
+
+export interface UpdateProjectSettingsOperation extends UamTransactionOperationBase {
+	kind: 'updateProjectSettings';
+	settings: ProjectSettings;
+}
+
+export interface UpdatePackageSettingsOperation extends UamTransactionOperationBase {
+	kind: 'updatePackageSettings';
+	selector: UamPackageSelector;
+	settings: UamPackageSettings;
 }
 
 export interface RenameResourceOperation extends UamTransactionOperationBase {
@@ -107,6 +137,44 @@ export interface SetResourceFavoriteOperation extends UamTransactionOperationBas
 	favorite: boolean;
 }
 
+export interface SetResourceFolderFavoriteOperation extends UamTransactionOperationBase {
+	kind: 'setResourceFolderFavorite';
+	selector: UamResourceFolderSelector;
+	favorite: boolean;
+}
+
+export interface SetResourceExportedOperation extends UamTransactionOperationBase {
+	kind: 'setResourceExported';
+	selector: UamResourceSelector;
+	exported: boolean;
+}
+
+export interface AddResourceFolderOperation extends UamTransactionOperationBase {
+	kind: 'addResourceFolder';
+	selector: UamPackageSelector;
+	path: string;
+	branch?: string;
+	favorite?: boolean;
+	atlas?: string;
+}
+
+export interface RenameResourceFolderOperation extends UamTransactionOperationBase {
+	kind: 'renameResourceFolder';
+	selector: UamResourceFolderSelector;
+	newName: string;
+}
+
+export interface MoveResourceFolderOperation extends UamTransactionOperationBase {
+	kind: 'moveResourceFolder';
+	selector: UamResourceFolderSelector;
+	toPath: string;
+}
+
+export interface RemoveResourceFolderOperation extends UamTransactionOperationBase {
+	kind: 'removeResourceFolder';
+	selector: UamResourceFolderSelector;
+}
+
 export interface SetImageResourcePropsOperation extends UamTransactionOperationBase {
 	kind: 'setImageResourceProps';
 	selector: UamResourceSelector;
@@ -117,6 +185,24 @@ export interface AddResourceOperation extends UamTransactionOperationBase {
 	kind: 'addResource';
 	selector: UamPackageSelector;
 	resource: UamAssetResource;
+	/** Stable package-resource insertion index. Omit to append. */
+	atIndex?: number;
+}
+
+export interface AddBranchOperation extends UamTransactionOperationBase {
+	kind: 'addBranch';
+	branch: string;
+}
+
+export interface RenameBranchOperation extends UamTransactionOperationBase {
+	kind: 'renameBranch';
+	selector: { branch: string };
+	newName: string;
+}
+
+export interface RemoveBranchOperation extends UamTransactionOperationBase {
+	kind: 'removeBranch';
+	selector: { branch: string };
 }
 
 /** Adds a complete package snapshot at a stable package-list position. */
@@ -264,11 +350,22 @@ export interface RemoveGearOperation extends UamTransactionOperationBase {
 }
 
 export type UamTransactionOperation =
+	| UpdateProjectSettingsOperation
+	| UpdatePackageSettingsOperation
 	| RenameResourceOperation
 	| MoveResourceOperation
 	| SetResourceFavoriteOperation
+	| SetResourceFolderFavoriteOperation
+	| SetResourceExportedOperation
+	| AddResourceFolderOperation
+	| RenameResourceFolderOperation
+	| MoveResourceFolderOperation
+	| RemoveResourceFolderOperation
 	| SetImageResourcePropsOperation
 	| AddResourceOperation
+	| AddBranchOperation
+	| RenameBranchOperation
+	| RemoveBranchOperation
 	| AddPackageOperation
 	| RenamePackageOperation
 	| RemovePackageOperation
@@ -295,6 +392,11 @@ export type UamTransactionOperation =
 	| RemoveGearOperation;
 
 export type UamTransactionSupportIssueCode =
+	| 'unsupported_operation'
+	| 'invalid_project_settings'
+	| 'project_settings_unchanged'
+	| 'invalid_package_settings'
+	| 'package_settings_unchanged'
 	| 'unsupported_resource_kind'
 	| 'unsupported_display_node_kind'
 	| 'unsupported_cross_package_image_ref'
@@ -308,6 +410,10 @@ export type UamTransactionSupportIssueCode =
 	| 'invalid_display_node_payload'
 	| 'invalid_resource_name'
 	| 'invalid_resource_path'
+	| 'invalid_resource_folder_selector'
+	| 'invalid_resource_folder_path'
+	| 'resource_folder_conflict'
+	| 'resource_folder_not_empty'
 	| 'invalid_attach_index'
 	| 'invalid_controller_payload'
 	| 'invalid_transition_payload'
@@ -319,9 +425,17 @@ export type UamTransactionSupportIssueCode =
 	| 'invalid_gear_payload'
 	| 'duplicate_gear_state_page'
 	| 'invalid_resource_payload'
+	| 'invalid_resource_bytes'
+	| 'invalid_movie_clip_jta'
 	| 'invalid_resource_selector'
+	| 'invalid_resource_index'
 	| 'invalid_resource_reference'
 	| 'invalid_display_node_selector'
+	| 'invalid_branch_name'
+	| 'invalid_branch_selector'
+	| 'duplicate_branch_name'
+	| 'branch_not_empty'
+	| 'branch_referenced'
 	| 'duplicate_resource_id'
 	| 'unavailable_resource_source_bytes'
 	| 'invalid_package_selector'

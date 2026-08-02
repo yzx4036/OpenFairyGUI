@@ -1,13 +1,10 @@
 import type {
-	Component,
 	Document,
-	DragonBonesResource,
 	FontResource,
 	ILogger,
 	ImageResource,
 	MovieClipResource,
 	Package,
-	SpineResource,
 } from '@openfairygui/core';
 import type { AtlasOptions } from '../atlas.js';
 import type {
@@ -15,9 +12,16 @@ import type {
 	AtlasRasterInput,
 	AtlasRasterResolvedBuffer,
 } from '../publish/contracts.js';
+import {
+	isFontResource,
+	isImageResource,
+	isMovieClipResource,
+	resolveImageFileName,
+	resolveImagePath,
+} from '../publish/package-context.js';
 import type { ExtrasMap } from '../shared-types.js';
 import { parseFnt } from './font.js';
-import { extractJtaFrames } from './jta.js';
+import { prepareJtaForPublish, type PreparedJtaData } from './jta.js';
 
 /** Trim info for a single image. */
 interface TrimInfo {
@@ -46,7 +50,6 @@ export function getPublishedItemId(resource: { getId(): string; getExtras(): Ext
 }
 
 interface ImageResourceExtras extends ExtrasMap {
-	_fileName?: string;
 	_publishedId?: string;
 }
 
@@ -61,11 +64,6 @@ export interface FontResourceExtras extends ExtrasMap {
 
 export function resolveFontFileName(fontName: string): string {
 	return /\.fnt$/i.test(fontName) ? fontName : `${fontName}.fnt`;
-}
-
-export function resolveImageFileName(resource: ImageResource): string {
-	const extras = resource.getExtras() as ImageResourceExtras;
-	return resource.getFileName() || extras._fileName || resource.getName();
 }
 
 /**
@@ -154,19 +152,6 @@ async function _trimImage(
 /**
  * Resolve an ImageResource to its actual file path on disk.
  */
-export function resolveImagePath(resource: ImageResource, pkg: Package, basePath: string): string {
-	const imgPath = resource.getPath() ?? '/';
-	const fileName = resolveImageFileName(resource);
-	const branchName = resource.getBranch?.() ?? '';
-	const normalizedBasePath = basePath.replace(/[/\\]+$/, '');
-	const packageBasePath = !branchName
-		? normalizedBasePath
-		: /[\\/]assets$/i.test(normalizedBasePath)
-			? normalizedBasePath.replace(/([\\/])assets$/i, `$1assets_${branchName}`)
-			: `${normalizedBasePath}_${branchName}`;
-	return `${packageBasePath}/${pkg.getName()}${imgPath}${fileName}`;
-}
-
 export type InputItem = {
 	id: string;
 	width: number;
@@ -194,6 +179,36 @@ export interface PagedAtlasGroup {
 	branchName: string;
 	branchOrdinal: number;
 	inputs: InputItem[];
+}
+
+export function resolveMovieClipSourcePath(resource: MovieClipResource, pkg: Package, basePath: string): string {
+	const fileName = `${resource.getName()}.jta`;
+	const resourcePath = resource.getPath() ?? '/';
+	return `${basePath}/${pkg.getName()}${resourcePath}${fileName}`;
+}
+
+export async function prepareMovieClipResource(
+	resource: MovieClipResource,
+	pkg: Package,
+	encoder: AtlasRasterBackend | undefined,
+	basePath: string,
+	readFileRaw: (path: string) => Promise<Uint8Array>,
+): Promise<PreparedJtaData> {
+	const filePath = resolveMovieClipSourcePath(resource, pkg, basePath);
+	let raw: Uint8Array;
+	try {
+		raw = await readFileRaw(filePath);
+	} catch {
+		throw new Error(`atlas: Could not read MovieClip "${filePath}".`);
+	}
+
+	try {
+		return await prepareJtaForPublish(raw, encoder, filePath);
+	} catch (error) {
+		if (error instanceof Error && error.message.startsWith('atlas:')) throw error;
+		const detail = error instanceof Error ? ` ${error.message}` : '';
+		throw new Error(`atlas: Could not parse MovieClip "${filePath}".${detail}`);
+	}
 }
 
 /** Collect a single ImageResource into the inputs array. */
@@ -231,9 +246,12 @@ export async function collectImage(
 					.toBuffer();
 				sourceHasAlpha = true;
 			}
-		} catch {
+		} catch (error) {
 			if (options.strictOutput) {
-				throw new Error(`atlas: Could not read image "${filePath}".`);
+				const detail = error instanceof Error && error.message.startsWith('publishBrowser:')
+					? ` ${error.message}`
+					: '';
+				throw new Error(`atlas: Could not read image "${filePath}".${detail}`);
 			}
 			if (origW === 0 || origH === 0) {
 				logger.warn(`atlas: Could not read image "${filePath}", skipping.`);
@@ -300,127 +318,59 @@ export async function collectMovieClipFrames(
 	}
 
 	const mcId = resource.getId();
-	const mcName = resource.getName() + '.jta';
-	const mcPath = resource.getPath() ?? '/';
-	const filePath = `${options.basePath}/${pkg.getName()}${mcPath}${mcName}`;
+	const filePath = resolveMovieClipSourcePath(resource, pkg, options.basePath);
 
 	try {
-		const raw = await options.readFileRaw(filePath);
-		const jta = extractJtaFrames(raw);
-		if (jta.frames.length === 0) return;
-
-		const frameMetas = jta.meta?.frames ?? [];
+		const jta =
+			options.preparedMovieClips?.get(resource) ??
+			(await prepareMovieClipResource(resource, pkg, encoder, options.basePath, options.readFileRaw));
 		for (const frame of resource.listFrames()) {
 			resource.removeFrame(frame);
 		}
 		resource
-			.setInterval(jta.meta?.interval ?? 100)
-			.setSwing(jta.meta?.swing ?? false)
-			.setRepeatDelay(jta.meta?.repeatDelay ?? 0);
-
-		if (frameMetas.length > 0) {
-			const firstFrameIndexByTextureIndex = new Map<number, number>();
-			for (let frameIndex = 0; frameIndex < frameMetas.length; frameIndex += 1) {
-				const meta = frameMetas[frameIndex];
-				const textureIndex = Number.isFinite(meta.textureIndex) ? meta.textureIndex : frameIndex;
-				if (!firstFrameIndexByTextureIndex.has(textureIndex)) {
-					firstFrameIndexByTextureIndex.set(textureIndex, frameIndex);
-				}
-			}
-
-			const spriteIdByTextureIndex = new Map<number, string>();
-			for (let textureIndex = 0; textureIndex < jta.frames.length; textureIndex += 1) {
-				const exportFrameIndex = firstFrameIndexByTextureIndex.get(textureIndex);
-				if (exportFrameIndex === undefined) continue;
-				const itemId = `${mcId}_${exportFrameIndex}`;
-			const input = await createMovieClipFrameInput(
-				jta.frames[textureIndex],
-				itemId,
+			.setInterval(jta.meta.interval)
+			.setSwing(jta.meta.swing)
+			.setRepeatDelay(jta.meta.repeatDelay);
+		const spriteIdByTextureIndex = new Map<number, string>();
+		for (const texture of jta.referencedTextures) {
+			if (texture.width <= 0 || texture.height <= 0) continue;
+			const itemId = `${mcId}_${texture.firstFrameIndex}`;
+			inputs.push({
+				id: itemId,
+				width: texture.width,
+				height: texture.height,
+				originalWidth: texture.width,
+				originalHeight: texture.height,
+				offsetX: 0,
+				offsetY: 0,
 				resource,
-				encoder,
-				options.strictOutput,
-			);
-				if (!input) continue;
-				inputs.push(input);
-				spriteIdByTextureIndex.set(textureIndex, itemId);
-			}
-
-			for (let frameIndex = 0; frameIndex < frameMetas.length; frameIndex += 1) {
-				const meta = frameMetas[frameIndex];
-				const textureIndex = Number.isFinite(meta.textureIndex) ? meta.textureIndex : frameIndex;
-				const frame = doc.createMovieFrame(`${mcId}_${frameIndex}`);
-				frame
-					.setRectX(meta.offsetX)
-					.setRectY(meta.offsetY)
-					.setRectWidth(meta.width)
-					.setRectHeight(meta.height)
-					.setAddDelay(meta.addDelay)
-					.setSpriteId(spriteIdByTextureIndex.get(textureIndex) ?? '');
-				resource.addFrame(frame);
-			}
-		} else {
-			for (let frameIndex = 0; frameIndex < jta.frames.length; frameIndex += 1) {
-				const itemId = `${mcId}_${frameIndex}`;
-				const input = await createMovieClipFrameInput(
-					jta.frames[frameIndex],
-					itemId,
-					resource,
-					encoder,
-					options.strictOutput,
-				);
-				if (!input) continue;
-				inputs.push(input);
-				const frame = doc.createMovieFrame(itemId);
-				frame
-					.setRectX(0)
-					.setRectY(0)
-					.setRectWidth(input.originalWidth)
-					.setRectHeight(input.originalHeight)
-					.setAddDelay(0)
-					.setSpriteId(itemId);
-				resource.addFrame(frame);
-			}
+				trimBuffer: texture.buffer,
+				sourceKind: 'movieclip-frame',
+			});
+			spriteIdByTextureIndex.set(texture.textureIndex, itemId);
 		}
 
-		if ((jta.meta?.width ?? 0) > 0 && (jta.meta?.height ?? 0) > 0) {
-			resource.setWidth(jta.meta?.width ?? 0);
-			resource.setHeight(jta.meta?.height ?? 0);
+		for (let frameIndex = 0; frameIndex < jta.meta.frames.length; frameIndex += 1) {
+			const meta = jta.meta.frames[frameIndex]!;
+			const frame = doc.createMovieFrame(`${mcId}_${frameIndex}`);
+			frame
+				.setRectX(meta.offsetX)
+				.setRectY(meta.offsetY)
+				.setRectWidth(meta.width)
+				.setRectHeight(meta.height)
+				.setAddDelay(meta.addDelay)
+				.setSpriteId(meta.textureIndex === -1 ? '' : (spriteIdByTextureIndex.get(meta.textureIndex) ?? ''));
+			resource.addFrame(frame);
 		}
-	} catch {
-		const message = `atlas: Could not parse MovieClip "${filePath}".`;
-		if (options.strictOutput) throw new Error(message);
+
+		if (jta.meta.width > 0 && jta.meta.height > 0) {
+			resource.setWidth(jta.meta.width);
+			resource.setHeight(jta.meta.height);
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : `atlas: Could not parse MovieClip "${filePath}".`;
+		if (options.strictOutput) throw error;
 		logger.warn(`${message} Skipping frames.`);
-	}
-}
-
-async function createMovieClipFrameInput(
-	buffer: Uint8Array,
-	itemId: string,
-	resource: MovieClipResource,
-	encoder: AtlasRasterBackend | undefined,
-	strictOutput: boolean,
-): Promise<InputItem | null> {
-	if (!encoder || buffer.length === 0) return null;
-	try {
-		const meta = await encoder(buffer).metadata();
-		const width = meta.width ?? 0;
-		const height = meta.height ?? 0;
-		if (width <= 0 || height <= 0) return null;
-		return {
-			id: itemId,
-			width,
-			height,
-			originalWidth: width,
-			originalHeight: height,
-			offsetX: 0,
-			offsetY: 0,
-			resource,
-			trimBuffer: buffer,
-			sourceKind: 'movieclip-frame',
-		};
-	} catch {
-		if (strictOutput) throw new Error(`atlas: Could not decode MovieClip frame "${itemId}".`);
-		return null;
 	}
 }
 
@@ -484,26 +434,6 @@ export async function collectFontTexture(
 			/* .fnt not found */
 		}
 	}
-}
-
-export function isComponentResource(resource: PackageResource): resource is Component {
-	return resource.propertyType === 'Component';
-}
-
-export function isImageResource(resource: PackageResource): resource is ImageResource {
-	return resource.propertyType === 'ImageResource';
-}
-
-export function isMovieClipResource(resource: PackageResource): resource is MovieClipResource {
-	return resource.propertyType === 'MovieClipResource';
-}
-
-export function isSkeletonResource(resource: PackageResource): resource is SpineResource | DragonBonesResource {
-	return resource.propertyType === 'SpineResource' || resource.propertyType === 'DragonBonesResource';
-}
-
-export function isFontResource(resource: PackageResource): resource is FontResource {
-	return resource.propertyType === 'FontResource';
 }
 
 export function isPackableResource(resource: PackageResource): resource is PackableResource {

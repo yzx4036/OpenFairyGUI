@@ -160,6 +160,79 @@ test('resource lifecycle preflight projects batches and rejects unsafe source pa
 	}
 });
 
+test('addResource restores exact resource order with optional stable indexes', async (t) => {
+	const createMisc = (id: string, byte: number) => ({
+		kind: 'misc' as const,
+		id,
+		name: `${id}.bin`,
+		path: '/',
+		exported: true,
+		favorite: false,
+		branch: '',
+		branchItemIds: [],
+		file: `${id}.bin`,
+		metadata: null,
+		sourceBytes: new Uint8Array([byte]),
+	});
+	const project = createSupportedProject();
+	const pkg = project.packages[0]!;
+	const orderedA = createMisc('zz0001', 1);
+	const orderedB = createMisc('aa0001', 2);
+	pkg.resources = [orderedA, pkg.resources[0]!, pkg.resources[1]!, orderedB];
+	const originalOrder = pkg.resources.map((resource) => resource.id);
+	const snapshots = [orderedA, orderedB].map((resource) => structuredClone(resource));
+
+	const removed = applyUamTransaction(project, snapshots.map((resource) => ({
+		kind: 'removeResource' as const,
+		selector: { packageId: pkg.id, resourceId: resource.id },
+	})));
+	const restored = applyUamTransaction(removed, snapshots.map((resource, index) => ({
+		kind: 'addResource' as const,
+		selector: { packageId: pkg.id },
+		resource,
+		atIndex: index === 0 ? 0 : 3,
+	})));
+	t.deepEqual(restored.packages[0]!.resources.map((resource) => resource.id), originalOrder);
+	const roundTripped = await roundTripCommittedProject(restored);
+	t.deepEqual(roundTripped.packages[0]!.resources.map((resource) => resource.id), originalOrder);
+
+	const appended = applyUamTransaction(restored, [{
+		kind: 'addResource',
+		selector: { packageId: pkg.id },
+		resource: createMisc('appended', 3),
+	}]);
+	t.is(appended.packages[0]!.resources.at(-1)?.id, 'appended');
+
+	const invalidSource = structuredClone(removed);
+	const invalidBefore = structuredClone(invalidSource);
+	const invalidOperations = [
+		{ kind: 'addResource' as const, selector: { packageId: pkg.id }, resource: createMisc('negative', 4), atIndex: -1 },
+		{ kind: 'addResource' as const, selector: { packageId: pkg.id }, resource: createMisc('past-end', 5), atIndex: 99 },
+		{ kind: 'addResource' as const, selector: { packageId: pkg.id }, resource: createMisc('null', 6), atIndex: null as unknown as number },
+		{ kind: 'addResource' as const, selector: { packageId: pkg.id }, resource: createMisc('nan', 7), atIndex: Number.NaN },
+		{ kind: 'addResource' as const, selector: { packageId: pkg.id }, resource: createMisc('fractional', 8), atIndex: 0.5 },
+	];
+	t.is(validateTransactionSupport(invalidSource, invalidOperations)
+		.filter((issue) => issue.code === 'invalid_resource_index').length, 5);
+	t.throws(() => applyUamTransaction(invalidSource, invalidOperations), { instanceOf: UamTransactionError });
+	t.deepEqual(invalidSource, invalidBefore);
+
+	const documentApplied = applyUamTransaction(removed, [
+		{
+			kind: 'addResource',
+			selector: { packageId: pkg.id },
+			resource: snapshots[0]!,
+			atIndex: 0,
+		},
+		{
+			kind: 'renameResource',
+			selector: { packageId: pkg.id, resourceId: snapshots[0]!.id },
+			newName: 'ordered-a-renamed.bin',
+		},
+	]);
+	t.is(documentApplied.packages[0]!.resources[0]?.id, snapshots[0]!.id);
+});
+
 test('UAM-native execution failure leaves the input project unchanged', (t) => {
 	const project = createSupportedProject();
 	const before = structuredClone(project);
@@ -185,6 +258,81 @@ test('UAM-native execution failure leaves the input project unchanged', (t) => {
 	]));
 	t.deepEqual(project, before);
 	t.false(project.packages[0]?.resources.some((resource) => resource.id === 'temporary'));
+});
+
+test('branch lifecycle preserves package-local slots and rejects unsafe removal', async (t) => {
+	const project = createSupportedProject();
+	project.branches = ['alpha', 'mobile', 'zulu'];
+	const main = project.packages[0]!;
+	main.branchNames = ['mobile', 'zulu'];
+	main.resources[0]!.branchItemIds = ['mobileImage', ''];
+	main.resources.push({
+		...structuredClone(main.resources[0]!),
+		id: 'mobileImage',
+		branch: 'mobile',
+		branchItemIds: [],
+	});
+	main.folders.push({ branch: 'mobile', path: '/mobile/', favorite: false, atlas: '' });
+	const overlay = createLifecyclePackage();
+	overlay.branchNames = ['alpha', 'mobile'];
+	overlay.resources = [{
+		...structuredClone(main.resources[0]!),
+		id: 'overlayMain',
+		branch: '',
+		branchItemIds: ['', 'overlayMobile'],
+	}, {
+		...structuredClone(main.resources[0]!),
+		id: 'overlayMobile',
+		branch: 'mobile',
+		branchItemIds: [],
+	}];
+	project.packages.push(overlay);
+	const baseline = applyUamTransaction(project, []);
+
+	const renamed = applyUamTransaction(baseline, [{
+		kind: 'renameBranch',
+		selector: { branch: 'mobile' },
+		newName: 'beta',
+	}]);
+	t.deepEqual(renamed.branches, ['alpha', 'beta', 'zulu']);
+	t.deepEqual(renamed.packages[0]!.branchNames, ['beta', 'zulu']);
+	t.deepEqual(renamed.packages[1]!.branchNames, ['alpha', 'beta']);
+	t.deepEqual(renamed.packages[0]!.resources[0]!.branchItemIds, ['mobileImage', '']);
+	t.true(renamed.packages.every((pkg) => pkg.resources.every((resource) => resource.branch !== 'mobile')));
+	t.true(renamed.packages[0]!.folders.some((folder) => folder.branch === 'beta'));
+	const reloaded = await roundTripCommittedProject(renamed);
+	t.deepEqual(reloaded.branches, ['alpha', 'beta', 'zulu']);
+	t.deepEqual(reloaded.packages[0]!.branchNames, ['beta', 'zulu']);
+	t.deepEqual(reloaded.packages[1]!.branchNames, ['alpha', 'beta']);
+	t.deepEqual(reloaded.packages[0]!.resources.find((resource) => resource.id === 'img001')?.branchItemIds, ['mobileImage', '']);
+	const restored = applyUamTransaction(renamed, [{
+		kind: 'renameBranch',
+		selector: { branch: 'beta' },
+		newName: 'mobile',
+	}]);
+	t.deepEqual(restored, baseline);
+
+	const emptyAdded = applyUamTransaction(baseline, [{ kind: 'addBranch', branch: 'empty' }]);
+	t.deepEqual(emptyAdded.branches, ['alpha', 'empty', 'mobile', 'zulu']);
+	t.deepEqual(applyUamTransaction(emptyAdded, [{ kind: 'removeBranch', selector: { branch: 'empty' } }]), baseline);
+
+	for (const [operation, code] of [
+		[{ kind: 'addBranch', branch: 'alpha' }, 'duplicate_branch_name'],
+		[{ kind: 'addBranch', branch: '../unsafe' }, 'invalid_branch_name'],
+		[{ kind: 'addBranch', branch: 'CON' }, 'invalid_branch_name'],
+		[{ kind: 'removeBranch', selector: { branch: 'missing' } }, 'invalid_branch_selector'],
+		[{ kind: 'removeBranch', selector: { branch: 'mobile' } }, 'branch_not_empty'],
+	] as const) {
+		t.true(validateTransactionSupport(baseline, [operation as UamTransactionOperation]).some((issue) => issue.code === code));
+	}
+	const referenced = createSupportedProject();
+	referenced.branches = ['mapped'];
+	referenced.packages[0]!.branchNames = ['mapped'];
+	referenced.packages[0]!.resources[0]!.branchItemIds = ['mappedVariant'];
+	t.true(validateTransactionSupport(referenced, [{
+		kind: 'removeBranch',
+		selector: { branch: 'mapped' },
+	}]).some((issue) => issue.code === 'branch_referenced'));
 });
 
 test('package and component lifecycle transactions survive write, reload, and inverse operations', async (t) => {
@@ -268,6 +416,15 @@ test('package and component lifecycle preflight reports dependency and batch dia
 	t.true(removeIssues.some((issue) => issue.code === 'component_referenced'));
 	t.true(removeIssues.some((issue) => issue.code === 'package_referenced'));
 
+	const movedComponent = project.packages[0]?.resources.find((resource) => resource.id === 'cmp001');
+	const movedImage = movedComponent?.kind === 'component'
+		? movedComponent.component.displayList.find((node) => node.id === 'n0')
+		: null;
+	if (movedImage?.kind !== 'image') {
+		t.fail('expected movable image dependency fixture');
+		return;
+	}
+	movedImage.resource.packageId = 'pkg001';
 	const moveIssues = validateTransactionSupport(project, [{
 		kind: 'moveComponent',
 		selector: { packageId: 'pkg001', componentResourceId: 'cmp001' },
@@ -284,6 +441,20 @@ test('package and component lifecycle preflight reports dependency and batch dia
 	t.true(addIssues.some((issue) => issue.code === 'duplicate_package_id'));
 	t.true(addIssues.some((issue) => issue.code === 'invalid_package_payload'));
 	t.true(addIssues.some((issue) => issue.code === 'invalid_package_index'));
+	for (const invalidPackage of [
+		{ ...createLifecyclePackage('invalid-settings-1'), jpegQuality: Number.NaN },
+		{ ...createLifecyclePackage('invalid-settings-2'), publish: null },
+		{
+			...createLifecyclePackage('invalid-settings-3'),
+			publish: { ...createLifecyclePackage().publish!, maxAtlasSize: 0 },
+		},
+	]) {
+		t.true(validateTransactionSupport(createSupportedProject(), [{
+			kind: 'addPackage',
+			package: invalidPackage,
+			atIndex: 1,
+		}]).some((issue) => issue.code === 'invalid_package_settings'));
+	}
 
 	const batchIssues = validateTransactionSupport(createSupportedProject(), [
 		{ kind: 'addPackage', package: createLifecyclePackage(), atIndex: 1 },
@@ -294,6 +465,61 @@ test('package and component lifecycle preflight reports dependency and batch dia
 		},
 	]);
 	t.deepEqual(batchIssues, []);
+});
+
+test('display-list projection validates and applies properties on a newly attached node', (t) => {
+	const project = createSupportedProject();
+	const node = structuredClone(createLifecycleComponent().component.displayList[0]!);
+	const operations: UamTransactionOperation[] = [
+		{
+			kind: 'attachDisplayNode',
+			selector: { packageId: 'pkg001', componentResourceId: 'cmp001' },
+			atIndex: 2,
+			node,
+		},
+		{
+			kind: 'setDisplayNodeProps',
+			selector: { packageId: 'pkg001', componentResourceId: 'cmp001', displayNodeId: node.id },
+			props: { alpha: 0.5 },
+		},
+	];
+	t.deepEqual(validateTransactionSupport(project, operations), []);
+	const updated = applyUamTransaction(project, operations);
+	const component = updated.packages[0]?.resources.find((resource) => resource.id === 'cmp001');
+	t.is(component?.kind === 'component'
+		? component.component.displayList.find((candidate) => candidate.id === node.id)?.alpha
+		: null, 0.5);
+});
+
+test('package-local dependencies resolve from a component destination after an atomic copy and move', (t) => {
+	const project = createSupportedProject();
+	const sourcePackage = project.packages[0]!;
+	const image = sourcePackage.resources.find((resource) => resource.id === 'img001');
+	if (image?.kind !== 'image') {
+		t.fail('expected image dependency fixture');
+		return;
+	}
+	project.packages.push(createLifecyclePackage());
+	const copiedImage = structuredClone(image);
+	delete copiedImage.sourcePath;
+	const operations: UamTransactionOperation[] = [
+		{
+			kind: 'addResource',
+			selector: { packageId: 'pkg002' },
+			resource: copiedImage,
+		},
+		{
+			kind: 'moveComponent',
+			selector: { packageId: 'pkg001', componentResourceId: 'cmp001' },
+			toPackageId: 'pkg002',
+			toIndex: 0,
+		},
+	];
+	t.deepEqual(validateTransactionSupport(project, operations), []);
+	const moved = applyUamTransaction(project, operations);
+	const target = moved.packages.find((pkg) => pkg.id === 'pkg002');
+	t.true(target?.resources.some((resource) => resource.id === 'img001'));
+	t.true(target?.resources.some((resource) => resource.id === 'cmp001'));
 });
 
 test('component lifecycle atomically rewrites inbound display references', async (t) => {
@@ -475,7 +701,24 @@ test('resource writes clean only explicit prior project sources and commit their
 		await writeProjectFromUam(io, removed, outFairy, { previousProject: renamed });
 		await t.throwsAsync(fs.access(path.join(tmpDir, 'assets', 'Main', 'moved', 'renamed.png')));
 
-		const withPackage = applyUamTransaction(removed, [
+		const withFolder = applyUamTransaction(removed, [{
+			kind: 'addResourceFolder', selector: { packageId: 'pkg001' }, path: '/empty/',
+		}]);
+		await writeProjectFromUam(io, withFolder, outFairy, { previousProject: removed });
+		await fs.access(path.join(tmpDir, 'assets', 'Main', 'empty'));
+		const renamedFolder = applyUamTransaction(withFolder, [{
+			kind: 'renameResourceFolder', selector: { packageId: 'pkg001', path: '/empty/' }, newName: 'renamed',
+		}]);
+		await writeProjectFromUam(io, renamedFolder, outFairy, { previousProject: withFolder });
+		await t.throwsAsync(fs.access(path.join(tmpDir, 'assets', 'Main', 'empty')));
+		await fs.access(path.join(tmpDir, 'assets', 'Main', 'renamed'));
+		const withoutFolder = applyUamTransaction(renamedFolder, [{
+			kind: 'removeResourceFolder', selector: { packageId: 'pkg001', path: '/renamed/' },
+		}]);
+		await writeProjectFromUam(io, withoutFolder, outFairy, { previousProject: renamedFolder });
+		await t.throwsAsync(fs.access(path.join(tmpDir, 'assets', 'Main', 'renamed')));
+
+		const withPackage = applyUamTransaction(withoutFolder, [
 			{ kind: 'addPackage', package: createLifecyclePackage(), atIndex: 1 },
 			{
 				kind: 'addComponent',
@@ -484,7 +727,7 @@ test('resource writes clean only explicit prior project sources and commit their
 			atIndex: 0,
 			},
 		]);
-		await writeProjectFromUam(io, withPackage, outFairy, { previousProject: removed });
+		await writeProjectFromUam(io, withPackage, outFairy, { previousProject: withoutFolder });
 		const renamedPackage = applyUamTransaction(withPackage, [
 			{ kind: 'renamePackage', selector: { packageId: 'pkg002' }, newName: 'OverlayRenamed' },
 		]);

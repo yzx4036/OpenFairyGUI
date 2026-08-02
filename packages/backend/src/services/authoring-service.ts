@@ -1,11 +1,14 @@
-import type { ProjectSourceFile } from '@openfairygui/core/project-io';
+import type { ProjectBranchDirectory, ProjectResourceFolder, ProjectSourceFile } from '@openfairygui/core/project-io';
 import {
 	commitUamProjectSourcePaths,
 	materializeUamProject,
+	staleBranchDirectories,
+	staleResourceFolders,
+	staleSourceFiles,
 	type UamProject,
 	validateUamProject,
 } from '@openfairygui/core/uam';
-import { type ApplyUamTransactionAppError, applyUamTransactionApp } from '@openfairygui/functions/uam';
+import { type ApplyUamTransactionAppError, applyUamTransactionAppAsync } from '@openfairygui/functions/uam';
 import type { BackendDiagnostic } from '../contracts.js';
 import { normalizeComparablePath, type PathPolicyViolationError, validateSaveTarget } from '../path-policy.js';
 import type {
@@ -31,43 +34,16 @@ import type { EventService } from './event-service.js';
 import { writeSessionProject } from './session-project-writer.js';
 import { createSessionNotFoundError, createStaleWriteError, toSessionSnapshot } from './session-utils.js';
 
-function projectSourceFiles(project: UamProject): Map<string, ProjectSourceFile> {
-	const result = new Map<string, ProjectSourceFile>();
-	for (const pkg of project.packages) {
-		result.set(`${pkg.id}/package.xml`, {
-			packageName: pkg.name,
-			branch: '',
-			path: '',
-			fileName: 'package.xml',
-		});
-		const branches = new Set<string>();
-		for (const resource of pkg.resources) {
-			if (resource.branch) branches.add(resource.branch);
-			const fileName = resource.kind === 'component'
-				? `${resource.name}.xml`
-				: resource.fileName ?? (resource.kind === 'image' ? '' : resource.file) ?? '';
-			if (!fileName) continue;
-			result.set(`${pkg.id}/${resource.id}`, {
-				packageName: pkg.name,
-				branch: resource.branch,
-				path: resource.path,
-				fileName,
-			});
-		}
-		for (const branch of branches) {
-			result.set(`${pkg.id}/branch/${branch}`, {
-				packageName: pkg.name,
-				branch,
-				path: '',
-				fileName: 'package_branch.xml',
-			});
-		}
-	}
-	return result;
-}
-
 function sourceFileKey(source: ProjectSourceFile): string {
 	return [source.branch, source.packageName, source.path, source.fileName].join('\0');
+}
+
+function resourceFolderKey(folder: ProjectResourceFolder): string {
+	return [folder.branch, folder.packageName, folder.path].join('\0');
+}
+
+function branchDirectoryKey(directory: ProjectBranchDirectory): string {
+	return [directory.branch, directory.packageName ?? ''].join('\0');
 }
 
 function recordStaleProjectFiles(
@@ -76,14 +52,23 @@ function recordStaleProjectFiles(
 	nextProject: UamProject,
 ): void {
 	if (!session.fileSystem) return;
-	const previousSources = projectSourceFiles(previousProject);
-	const nextSourceKeys = new Set([...projectSourceFiles(nextProject).values()].map(sourceFileKey));
-	for (const source of previousSources.values()) {
-		const key = sourceFileKey(source);
-		if (!nextSourceKeys.has(key)) session.pendingStaleSourceFiles.set(key, source);
+	for (const source of staleSourceFiles(previousProject, nextProject)) {
+		session.pendingStaleSourceFiles.set(sourceFileKey(source), source);
 	}
-	for (const key of nextSourceKeys) {
-		session.pendingStaleSourceFiles.delete(key);
+	for (const source of staleSourceFiles(nextProject, previousProject)) {
+		session.pendingStaleSourceFiles.delete(sourceFileKey(source));
+	}
+	for (const folder of staleResourceFolders(previousProject, nextProject)) {
+		session.pendingStaleResourceFolders.set(resourceFolderKey(folder), folder);
+	}
+	for (const folder of staleResourceFolders(nextProject, previousProject)) {
+		session.pendingStaleResourceFolders.delete(resourceFolderKey(folder));
+	}
+	for (const directory of staleBranchDirectories(previousProject, nextProject)) {
+		session.pendingStaleBranchDirectories.set(branchDirectoryKey(directory), directory);
+	}
+	for (const directory of staleBranchDirectories(nextProject, previousProject)) {
+		session.pendingStaleBranchDirectories.delete(branchDirectoryKey(directory));
 	}
 }
 
@@ -170,6 +155,20 @@ function storageCanonicalTarget(input: NonNullable<MaterializeSessionInput['stor
 	};
 }
 
+function detachSharedByteViews(value: unknown, seen = new WeakSet<object>()): void {
+	if (!value || typeof value !== 'object' || seen.has(value)) return;
+	seen.add(value);
+	for (const [key, child] of Object.entries(value)) {
+		if (child instanceof Uint8Array) {
+			if (typeof SharedArrayBuffer !== 'undefined' && child.buffer instanceof SharedArrayBuffer) {
+				(value as Record<string, unknown>)[key] = new Uint8Array(child);
+			}
+			continue;
+		}
+		detachSharedByteViews(child, seen);
+	}
+}
+
 export class AuthoringService {
 	private readonly sessionOperations = new Map<string, Promise<void>>();
 
@@ -204,7 +203,9 @@ export class AuthoringService {
 			SessionNotFoundError | SessionStaleWriteError | ApplyUamTransactionAppError
 		>
 	> {
-		return this.runSessionExclusive(input.sessionId, () => this.applyTransactionExclusive(input));
+		const queuedInput = structuredClone(input);
+		detachSharedByteViews(queuedInput);
+		return this.runSessionExclusive(queuedInput.sessionId, () => this.applyTransactionExclusive(queuedInput));
 	}
 
 	private async applyTransactionExclusive(
@@ -239,10 +240,13 @@ export class AuthoringService {
 			);
 		}
 
-		const result = applyUamTransactionApp({
+		const result = await applyUamTransactionAppAsync({
 			project: session.project,
 			operations: input.operations,
 		});
+		if (this.context.sessions.get(input.sessionId) !== session || session.closed) {
+			return failure('authoring', startedAt, createSessionNotFoundError(input.sessionId));
+		}
 		if (result.ok === false) {
 			const diagnostics = toBackendDiagnostics(result.error);
 			this.eventService.emit({
@@ -411,11 +415,15 @@ export class AuthoringService {
 				document: materializeUamProject(session.project),
 				fairyPath: session.fairyPath,
 				staleSourceFiles: [...session.pendingStaleSourceFiles.values()],
+				staleResourceFolders: [...session.pendingStaleResourceFolders.values()],
+				staleBranchDirectories: [...session.pendingStaleBranchDirectories.values()],
 				writtenPaths: committedPaths,
 				failedPaths,
 			});
 			session.fileSystem ??= fileSystem;
 			session.pendingStaleSourceFiles.clear();
+			session.pendingStaleResourceFolders.clear();
+			session.pendingStaleBranchDirectories.clear();
 			commitUamProjectSourcePaths(session.project);
 			session.lastSavedRevision = session.revision;
 			session.dirty = false;
@@ -650,11 +658,21 @@ export class AuthoringService {
 				document,
 				fairyPath,
 				staleSourceFiles: isSessionStorageTarget ? [...session.pendingStaleSourceFiles.values()] : [],
+				staleResourceFolders: isSessionStorageTarget ? [...session.pendingStaleResourceFolders.values()] : [],
+				staleBranchDirectories: isSessionStorageTarget ? [...session.pendingStaleBranchDirectories.values()] : [],
 				writtenPaths,
 				failedPaths,
 			});
-			if (isSessionStorageTarget) session.pendingStaleSourceFiles.clear();
-			if (storageTarget && !isSessionStorageTarget) session.pendingStaleSourceFiles.clear();
+			if (isSessionStorageTarget) {
+				session.pendingStaleSourceFiles.clear();
+				session.pendingStaleResourceFolders.clear();
+				session.pendingStaleBranchDirectories.clear();
+			}
+			if (storageTarget && !isSessionStorageTarget) {
+				session.pendingStaleSourceFiles.clear();
+				session.pendingStaleResourceFolders.clear();
+				session.pendingStaleBranchDirectories.clear();
+			}
 			if (isSessionStorageTarget || storageTarget) commitUamProjectSourcePaths(session.project);
 			if (storageTarget) {
 				this.context.sessionsByPath.delete(session.canonicalPathKey);

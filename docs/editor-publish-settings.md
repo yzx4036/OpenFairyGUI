@@ -2,6 +2,20 @@
 
 本文只记录 FairyGUI 编辑器侧真实存在的发布属性与设置文件结构，作为发布相关功能开发时的依据。本文只按编辑器真实属性组织内容。
 
+## 项目设置 sidecar
+
+工程设置目录支持以下五个 JSON 文件：
+
+| 文件 | 正式设置字段 |
+|---|---|
+| `Publish.json` | `publish` |
+| `Common.json` | `common` |
+| `Adaptation.json` | `adaptation` |
+| `CustomProperties.json` | `customProperties`，保存 JSON 对象 |
+| `i18n.json` | `i18n`，其中 `langFiles` 保存语言文件的 `name` 与 `path` |
+
+五类设置在工程读写与 UAM 往返中保持完整的嵌套 JSON 数据。`CustomProperties.json` 与 `i18n.json` 是可选文件；源工程不存在对应设置时，规范化和写回不会自行创建它们。`updateProjectSettings` 以完整设置快照更新工程设置，相同快照以 `project_settings_unchanged` 拒绝；从快照删除可选字段时，写回会删除已有 sidecar，并要求文件系统提供 `unlink()`。
+
 ## 设置文件与层级
 
 编辑器发布设置至少分为两层：
@@ -80,6 +94,8 @@
 
 当 `package.xml` 的 `image` 资源指向 `.svg`，并声明了正的 `width` 和 `height` 时，发布会先按这两个声明尺寸栅格化，再执行可选裁边和图集合成。发布物只包含 PNG 图集；sprite 的原始尺寸保持为工程声明值。
 
+浏览器发布会在栅格化前拒绝脚本、事件属性、外部资源引用、DTD/实体、样式和超出尺寸或复杂度上限的 SVG。`createImageBitmap` 无法解码已验证 SVG 时，会使用 `HTMLImageElement` 与 Blob URL 回退；Blob URL 在成功和失败路径都会释放。宿主同时缺少可用 DOM 图像解码能力时，发布失败且不写出产物。
+
 ## 包级发布设置真实属性
 
 `PublishSettings` 代表单个包的发布设置，真实属性如下：
@@ -99,18 +115,45 @@
 说明：
 - `PublishSettings` 不是 `settings/Publish.json` 的顶层结构，而是单个包发布配置对象。
 - 包级设置里可以单独定义图集列表，也可以指定使用全局图集设置。
-- 工程 `package.xml` 中的 `publish` 节点当前正式支持 `name`、`path`、`branchPath`、`packageCount`、`genCode`、`codePath`，以及包级图集子节点 `<atlas name="Default" index="0"/>`。
-- 工程 `package.xml` 的 `packageDescription` 根节点当前正式支持 `compressPNG`、`jpegQuality` 与派生的 `hasFavorites`；未设置的图片压缩选项保持省略，`hasFavorites` 仅在包内存在收藏资源时写为 `true`。
+- 工程 `package.xml` 中的 `publish` 节点正式支持 `name`、`path`、`branchPath`、`packageCount`、`genCode`、`codePath`、`maxAtlasSize`、`sizeOption`、`square`、`rotation`、`multiPage`、`extractAlpha`、`maxAtlasIndex`、`excluded`，以及稀疏的包级图集子节点 `<atlas name="Default" index="0" compression="true"/>`。缺少 `maxAtlasSize` 表示使用全局图集设置；`maxAtlasIndex` 默认是 `10`，图集子节点只记录实际命名或启用压缩的槽位。
+- 工程 `package.xml` 的 `packageDescription` 根节点正式支持 `compressPNG`、`jpegQuality` 与派生的 `hasFavorites`；未设置的图片压缩选项保持省略，`hasFavorites` 仅在包内存在收藏资源或资源文件夹时写为 `true`。UAM 同时承载根节点压缩值与完整包级 publish 快照，lift/materialize 不会丢失这些字段。
+- `<publish><atlas>` 是工程源配置，与发布/二进制读取后 `Package.listAtlases()` 中的生成 atlas 分离；ProjectWriter 只从源配置写回 `<publish><atlas>`，不会把生成 atlas 反写到 `package.xml`。
 
-## 工程资源收藏元数据
+`updatePackageSettings` 使用包含 `compressPNG`、`jpegQuality` 和完整 `publish` 的单包快照，删除字段通过提交新的完整快照表达；相同快照以 `package_settings_unchanged` 拒绝。包名和输出路径必须是安全的相对路径，JPEG 质量范围是 1–100，包级 atlas 最大尺寸范围是 1–16384，`maxAtlasIndex` 范围是 0–255；稀疏 atlas 索引必须唯一且不超过该上限。`excludedResourceIds` 保存 CSV-safe 的资源 ID，可以保留当前工程中不存在的 ID，读取与写回不会把它误判为悬空引用。
 
-`package.xml` 与 `package_branch.xml` 的 component/asset 资源节点使用 `favorite="true"` 记录收藏状态；未收藏时省略该属性。主 `package.xml` 的 `packageDescription@hasFavorites` 由包内所有已建模资源的收藏状态派生，不作为独立可编辑状态。
+## 组件 XML 的列表清理与属性覆盖
 
-UAM 通过 `resource.favorite` 承载该字段，公开事务使用幂等的 `setResourceFavorite` 设置目标布尔值。收藏状态只影响编辑器工程数据，不进入运行时二进制发布协议。当前工程资源模型不包含 package folder 项，因此文件夹收藏不在这一正式范围内。
+组件根扩展、ComboBox 组件实例和 List/Tree 显示节点使用正式的 `autoClearItems` 布尔属性；缺省值为 `false`，仅在启用时写出。组件实例与静态列表项的有序 `<property target="..." propertyId="..." value="..."/>` 子节点由 UAM 正式属性承载，读取、物化、保存和重新加载均保持原顺序与原始字符串值，包括前后空白、纯空白和空字符串。`target` 必须非空，`propertyId` 必须是非负安全整数，`value` 必须存在；无效输入在物化或写回前拒绝。
+
+## 工程资源树元数据
+
+`package.xml` 与 `package_branch.xml` 的 component/asset 资源节点使用 `exported="true"` 与 `favorite="true"` 记录导出和收藏状态；未导出、未收藏时省略对应属性。UAM 通过 `resource.exported`、`resource.favorite` 承载这些字段，公开事务分别使用幂等的 `setResourceExported`、`setResourceFavorite` 设置目标布尔值。
+
+每个 package 通过正式的 `branchNames` 顺序记录自身出现的资源分支，并以 `package.xml` 根节点的同名 JSON 数组属性持久化。工程读取时使用该顺序建立映射；二进制发布时同一顺序定义该 package 的 `branchItemIds` 槽位，不能按工程根分支顺序重新推导。未显式设置包内表的 Document 调用会从实际分支资源按工程分支顺序推导后再发布。
+
+公开事务 `addBranch`、`renameBranch`、`removeBranch` 维护按名称排序的工程分支注册表。重命名会原子更新资源、资源文件夹和包内分支表，但保持每个包已有槽位位置不变；删除只允许空且没有变体 ID 映射的分支。分支名必须是安全、非保留的单个路径段。编辑器当前激活分支属于本地界面状态，不在这些工程事务中修改。
+
+ProjectWriter 会为每个工程分支保留 `assets_<branch>/`，并为包内空分支槽位写出空的 `package_branch.xml`，因此空分支和包内分支子集都能在 ProjectReader reload 后恢复。重命名或删除成功保存后，仅以非递归目录删除清理已移除的受控分支目录。
+
+资源文件夹由 `package.folders` 正式承载 `branch / path / favorite / atlas`。文件夹路径使用以 `/` 开头和结尾的规范形式，根目录是隐式节点；实际 `assets[/_<branch>]/<包名>/` 目录是存在性的事实来源，`<folder>` 节点只写入需要持久化的收藏或图集元数据。`setResourceFolderFavorite` 可更新既有主分支或资源分支文件夹的收藏状态，且单个操作只修改 selector 指定的文件夹；需要匹配编辑器的后代收藏行为时，调用方应在同一事务中显式提交后代文件夹与资源收藏操作。公开事务 `addResourceFolder`、`renameResourceFolder`、`moveResourceFolder`、`removeResourceFolder` 只操作空文件夹；父目录必须存在，根目录、路径冲突和非空操作会在提交前拒绝。浏览器存储适配器须提供非递归 `rmdir`，保存成功后才清理被移除的空目录。
+
+主 `package.xml` 的 `packageDescription@hasFavorites` 由包内资源与资源文件夹的收藏状态派生，不作为独立可编辑状态。收藏状态只影响编辑器工程数据，不进入运行时二进制发布协议。
 
 ## 工程图片资源属性
 
 `package.xml` 与 `package_branch.xml` 的 `image` 资源属性由 UAM `resource.image` 完整快照承载，包括纹理集模式、质量选项与自定义质量、平滑、边缘复制、缩放模式、九宫格和 tile-grid 位掩码。公开事务 `setImageResourceProps` 只替换这份正式属性快照，不修改图片 source bytes；非图片 selector、不完整快照、非法缩放模式、九宫格或位掩码会在写回前被拒绝。
+
+图片 source bytes 通过 `replaceResourceBytes` 更新时，当前只支持 PNG 与常见 8-bit Huffman JPEG。preflight 会检查 PNG 的 chunk CRC、zlib/scanline 边界和容器顺序；JPEG 除检查 quantization/Huffman table、frame/scan 顺序及编码约束外，还会完成像素解码。两者都会核对实际格式与操作时、最终文件扩展名；畸形或不匹配返回 `invalid_resource_bytes`，SVG、WebP、GIF、PSD、TGA 等未支持格式返回 `unsupported_resource_mutation`。浏览器 backend 通过 `applyUamTransactionAsync` 在包内 Web Worker 中执行相同的严格校验，browser 环境误用同步入口会直接拒绝而不会在主线程扫描或解码。消费端 bundler 必须把公开入口 `@openfairygui/core/image-validation-worker` 再打成与主 bundle 相邻的 self-contained ESM `image-validation-worker.js`；仅重打主入口或只复制 worker 文件不会带上其解码 chunk。Worker 无响应会在 10 秒后终止。浏览器 source 上限为 8 MiB，decoded raster 上限为 8,388,608 pixels；Node/CLI 同步校验的 source/PNG decoded bytes 上限为 128 MiB，JPEG 严格解码另限 8,388,608 pixels 与 64 MiB。
+
+有效替换会从 bytes 派生新的 raster 宽高，并在同一内存 transaction 中原子投影到 UAM 与 Document。后续 Save 仍沿用现有多文件写回，不承诺文件系统级 `atomicSave`。`ProjectReader` 在请求 `hydrateResourceBytes` 时以可解析且字段合法的 PNG IHDR / JPEG SOF header 覆盖陈旧 XML 尺寸，不在批量水合时扫描完整容器或重复执行像素解码；SVG 继续使用工程声明尺寸。
+
+## 工程 MovieClip 资源属性与 JTA 事务
+
+`package.xml` 与 `package_branch.xml` 的 `movieclip` 资源使用 `atlas` 记录纹理集模式，并使用 `smoothing` 记录平滑设置。缺少 `smoothing` 时按 `true` 读取；写回时仅为非默认值输出 `smoothing="false"`。MovieClip 资源使用正式的 `UamMovieClipResource.movieClip` 快照承载 `interval`、`repeatDelay`、`swing`、`smoothing` 和逐帧矩形/附加延迟/sprite id，不读取旧式 `metadata` 属性袋。
+
+`ProjectReader` 水合 JTA v100-v102 时，以 source bytes 派生尺寸、播放 timing 与帧列表；`fps === 0` 按 24 归一，负值无效，毫秒字段使用整数截断。无法解析派生模型时仍保留原始 source bytes 和 XML 属性。JTA 不携带的 `smoothing` 继续以 XML/UAM 为事实来源。
+
+`addResource`、包含 MovieClip 的 `addPackage` 与 `replaceResourceBytes` 会先完成有边界的 JTA 解析，再在同一个原子 transaction 中替换 bytes 和重建模型。解析失败统一返回 `invalid_movie_clip_jta`；UAM project、backend revision/dirty 与 storage 均保持不变。MovieClip 不经过图片 raster worker，所以 Browser 与 Node 使用相同的 Core parser 和派生规则。Save/reload 与 inverse/save/reload 都从持久化的 JTA source 重建同一模型。
 
 ## 当前发布输出路径解析
 
@@ -122,6 +165,8 @@ UAM 通过 `resource.favorite` 承载该字段，公开事务使用幂等的 `se
 
 选中的相对路径以工程根目录为基准；若以上都未配置，发布不会隐式选择输出目录。
 
+浏览器 Laya 发布在显式 `output` 下不会使用工程或包内的桌面输出路径；显式 `branch`、`packages`、`compressed` 与 `atlas` 也保持调用参数优先。未显式覆盖时，持久化的压缩、图集和安全文件扩展名设置直接驱动输出。当前浏览器宿主不提供代码生成；全局允许且任一选中包启用 `genCode` 时，发布会在 Canvas 检查和文件写入前以 `unsupported_publish_setting`（含 `setting` 与 `path`）拒绝。失败结果的 `files` 只包含已经完成 `writeFileRaw` 的文件，因此 `success=false` 且列表非空表示内置输出已部分写入；需要原子发布的宿主必须提供事务式或 staging 输出文件系统。
+
 ## 当前发布完整性要求
 
 这些要求是 OpenFairyGUI 当前发布执行时的能力边界，不是新增的编辑器设置字段：
@@ -131,9 +176,12 @@ UAM 通过 `resource.favorite` 承载该字段，公开事务使用幂等的 `se
 | 已解析到发布输出目录 | 必须提供输出文件系统；缺失时不会把流程当作发布成功 |
 | 有需要封包的图像或动画帧 | 必须提供 raster encoder、源资源路径和 atlas 输出目录 |
 | 图集装箱、图像读取或合成失败 | 中止发布，不生成带透明空洞或缺页的成功结果 |
+| 发布集合包含 MovieClip | 按 JTA 长度表读取 PNG / JPEG（可混合）纹理；重复 texture index 复用首次引用帧的 sprite，`-1` 表示空帧。所有选中包会先完成 JTA 解析、严格 PNG/JPEG 校验、引用纹理完整解码与规范化缓存；越界索引、被引用的空纹理、未支持格式、截断数据或解码失败会在创建任何 OpenFairyGUI 内置输出目录或写入内置发布文件前中止整次发布 |
 | `SoundResource`、`MiscResource`、`SpineResource`、`DragonBonesResource` 及其依赖复制失败 | 中止发布，不把缺失的 runtime 资源降级为 warning |
 
 未请求任何输出目录时，低层 `publish()` 可以只计算 layout；这不是文件发布，也不会写出二进制或资源文件。标准 Node 工作流应使用 `publishNode()`。
+
+这里的零输出保证只覆盖 OpenFairyGUI 内置的 sound、external resource、atlas、package binary 与 codegen 输出。Node `onPublishStart` 插件在内置 preflight 之前运行，并可通过宿主提供的文件系统执行自己的副作用；这些插件写入不会被 staging 或自动回滚。需要零副作用的插件应把写入延后到 `onPublishEnd`，或自行实现临时目录与提交策略。
 
 ## 代码生成的当前实现范围
 

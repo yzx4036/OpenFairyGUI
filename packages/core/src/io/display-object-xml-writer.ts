@@ -1,6 +1,7 @@
 import { GearType } from '../constants.js';
 import type { Gear } from '../properties/gear.js';
 import type { GObject } from '../properties/g-object.js';
+import { renderXmlAttrs } from '../utils/xml-utils.js';
 import { PROJECT_XML_PROTOCOL, writeXmlAttr, type XmlNodeProtocol } from './project-xml-protocol.js';
 
 const GEAR_TAG: Record<number, string> = {
@@ -138,29 +139,6 @@ function isDefaultBlackColor(color: string | undefined): boolean {
 	return sameColor(color, '#000000') || sameColor(color, '#FF000000');
 }
 
-
-function escapeXmlAttr(value: unknown): string {
-	return String(value)
-		.replace(/&/g, '&amp;')
-		.replace(/\r\n/g, '&#xA;')
-		.replace(/[\r\n]/g, '&#xA;')
-		.replace(/\t/g, '&#x9;')
-		.replace(/"/g, '&quot;')
-		.replace(/'/g, '&apos;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;');
-}
-
-function renderXmlAttrs(attrs: Record<string, unknown>): string {
-	const parts: string[] = [];
-	for (const [key, value] of Object.entries(attrs)) {
-		if (value === undefined || value === null) continue;
-		if (Array.isArray(value) || typeof value === 'object') continue;
-		const attrName = key.startsWith('@_') ? key.slice(2) : key;
-		parts.push(` ${attrName}="${escapeXmlAttr(value)}"`);
-	}
-	return parts.join('');
-}
 
 function renderXmlText(value: unknown): string {
 	return String(value)
@@ -361,6 +339,7 @@ type WritableChild = GObject & {
 	getTouchable?(): boolean;
 	getGrayed?(): boolean;
 	getTooltips?(): string;
+	getBlendMode?(): string;
 	getCustomData?(): string;
 	getFileName?(): string;
 	getPackageId?(): string;
@@ -447,11 +426,13 @@ type WritableChild = GObject & {
 		level?: number;
 		isFolder?: boolean | null;
 		controllers?: string | null;
+		propertyOverrides?: Array<{ target: string; propertyId: number; value: string }>;
 	}>;
 	getIndent?(): number;
 	getClickToExpand?(): number;
 	getScrollItemToViewOnClick?(): boolean;
 	getFoldInvisibleItems?(): boolean;
+	getAutoClearItems?(): boolean;
 	getPageController?(): string;
 	getControllerOverrides?(): string;
 	getPromptText?(): string;
@@ -474,6 +455,7 @@ type WritableChild = GObject & {
 	getInstancePromptText?(): string;
 	getInstanceSelectionController?(): string;
 	getInstanceVisibleItemCount?(): number;
+	getInstanceAutoClearItems?(): boolean;
 	getInstanceValue?(): number;
 	getInstanceMax?(): number;
 	getInstanceMin?(): number;
@@ -482,6 +464,7 @@ type WritableChild = GObject & {
 		value?: string | null;
 		icon?: string | null;
 	}>;
+	getPropertyOverrides?(): Array<{ target: string; propertyId: number; value: string }>;
 };
 
 
@@ -491,6 +474,42 @@ function writeCommonDisplayState(
 	protocol: XmlNodeProtocol,
 ): void {
 	const specs = protocol.attrs;
+	if (specs.xy) {
+		writeXmlAttr(target, specs.xy, `${object.getX?.() ?? 0},${object.getY?.() ?? 0}`);
+	}
+	const width = object.getWidth?.() ?? 0;
+	const height = object.getHeight?.() ?? 0;
+	if (specs.size && (width !== 0 || height !== 0)) {
+		writeXmlAttr(target, specs.size, `${width},${height}`);
+	}
+	if (specs.locked && object.getLocked?.()) writeXmlAttr(target, specs.locked, 'true');
+	const restrictSize = [
+		object.getMinWidth?.() ?? 0,
+		object.getMaxWidth?.() ?? 0,
+		object.getMinHeight?.() ?? 0,
+		object.getMaxHeight?.() ?? 0,
+	];
+	if (specs.restrictSize && restrictSize.some((value) => value !== 0)) {
+		writeXmlAttr(target, specs.restrictSize, restrictSize.join(','));
+	}
+	if (specs.aspect && object.getAspect?.()) writeXmlAttr(target, specs.aspect, 'true');
+	const pivotX = object.getPivotX?.() ?? 0;
+	const pivotY = object.getPivotY?.() ?? 0;
+	if (specs.pivot && (pivotX !== 0 || pivotY !== 0)) {
+		writeXmlAttr(target, specs.pivot, `${pivotX},${pivotY}`);
+		if (specs.anchor && object.getPivotAsAnchor?.()) writeXmlAttr(target, specs.anchor, 'true');
+	}
+	const scaleX = object.getScaleX?.() ?? 1;
+	const scaleY = object.getScaleY?.() ?? 1;
+	if (specs.scale && (scaleX !== 1 || scaleY !== 1)) {
+		writeXmlAttr(target, specs.scale, `${scaleX},${scaleY}`);
+	}
+	const skewX = object.getSkewX?.() ?? 0;
+	const skewY = object.getSkewY?.() ?? 0;
+	if (specs.skew && (skewX !== 0 || skewY !== 0)) {
+		writeXmlAttr(target, specs.skew, `${skewX},${skewY}`);
+	}
+	if (specs.group && object.getGroup?.()) writeXmlAttr(target, specs.group, object.getGroup?.());
 	if (specs.alpha && (object.getAlpha?.() ?? 1) !== 1) {
 		writeXmlAttr(target, specs.alpha, formatDisplayAlpha(object.getAlpha?.() ?? 1));
 	}
@@ -506,6 +525,12 @@ function writeCommonDisplayState(
 	if (specs.grayed && object.getGrayed?.()) {
 		writeXmlAttr(target, specs.grayed, 'true');
 	}
+	if (specs.tooltips && object.getTooltips?.()) writeXmlAttr(target, specs.tooltips, object.getTooltips?.());
+	if (specs.customData && object.getCustomData?.()) writeXmlAttr(target, specs.customData, object.getCustomData?.());
+	const blendMode = object.getBlendMode?.() ?? 'normal';
+	if (specs.blendMode && blendMode !== 'normal') writeXmlAttr(target, specs.blendMode, blendMode);
+	if (specs.filter && object.getFilter?.()) writeXmlAttr(target, specs.filter, object.getFilter?.());
+	if (specs.filterData && object.getFilterData?.()) writeXmlAttr(target, specs.filterData, object.getFilterData?.());
 }
 
 export function hasNonZeroInsets(value: { top?: number; bottom?: number; left?: number; right?: number } | null | undefined): boolean {
@@ -557,6 +582,7 @@ function serializeListItemXmlNode(item: {
 	level?: number;
 	isFolder?: boolean | null;
 	controllers?: string | null;
+	propertyOverrides?: Array<{ target: string; propertyId: number; value: string }>;
 }, options?: {
 	forceLevel?: boolean;
 }): Record<string, unknown> {
@@ -575,6 +601,23 @@ function serializeListItemXmlNode(item: {
 		writeXmlAttr(attrs, specs.isFolder, item.isFolder ? 'true' : 'false');
 	}
 	if (item.controllers !== undefined && item.controllers !== null) writeXmlAttr(attrs, specs.controllers, item.controllers);
+	const propertyChildName = getProtocolChildName(PROJECT_XML_PROTOCOL.listItem, 'property');
+	if (propertyChildName && item.propertyOverrides?.length) {
+		attrs[propertyChildName] = item.propertyOverrides.map(serializePropertyOverrideXmlNode);
+	}
+	return attrs;
+}
+
+function serializePropertyOverrideXmlNode(property: {
+	target: string;
+	propertyId: number;
+	value: string;
+}): Record<string, unknown> {
+	const attrs: Record<string, unknown> = {};
+	const specs = PROJECT_XML_PROTOCOL.propertyOverride.attrs;
+	writeXmlAttr(attrs, specs.target, property.target);
+	writeXmlAttr(attrs, specs.propertyId, String(property.propertyId));
+	writeXmlAttr(attrs, specs.value, property.value);
 	return attrs;
 }
 
@@ -1130,6 +1173,9 @@ function serializeChild(obj: GObject): Record<string, unknown> {
 			if (typedObj.getFoldInvisibleItems?.() === true) {
 				writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.list.attrs.foldInvisibleItems, 'true');
 			}
+			if (typedObj.getAutoClearItems?.() === true) {
+				writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.list.attrs.autoClearItems, 'true');
+			}
 			const listItems = typedObj.getListItems?.() ?? [];
 			const listItemChildName = getProtocolChildName(PROJECT_XML_PROTOCOL.list, 'item');
 			if (listItems.length > 0 && listItemChildName) {
@@ -1194,6 +1240,11 @@ function serializeChild(obj: GObject): Record<string, unknown> {
 			}
 		}
 		if (type === 'GComponent') {
+			const propertyOverrides = typedObj.getPropertyOverrides?.() ?? [];
+			const propertyChildName = getProtocolChildName(PROJECT_XML_PROTOCOL.componentInstance, 'property');
+			if (propertyChildName && propertyOverrides.length > 0) {
+				attrs[propertyChildName] = propertyOverrides.map(serializePropertyOverrideXmlNode);
+			}
 			const instanceExtType = typedObj.getInstanceExtType?.() ?? '';
 			if (instanceExtType) {
 				const extProtocol = EXTENSION_PROTOCOL_MAP[instanceExtType as keyof typeof EXTENSION_PROTOCOL_MAP];
@@ -1215,6 +1266,7 @@ function serializeChild(obj: GObject): Record<string, unknown> {
 				if (typedObj.getInstancePromptText?.() && extSpecs.prompt) writeXmlAttr(extAttrs, extSpecs.prompt, typedObj.getInstancePromptText?.());
 				if (typedObj.getInstanceSelectionController?.() && extSpecs.selectionController) writeXmlAttr(extAttrs, extSpecs.selectionController, typedObj.getInstanceSelectionController?.());
 				if ((typedObj.getInstanceVisibleItemCount?.() ?? 0) > 0 && extSpecs.visibleItemCount) writeXmlAttr(extAttrs, extSpecs.visibleItemCount, String(typedObj.getInstanceVisibleItemCount?.() ?? 0));
+				if (typedObj.getInstanceAutoClearItems?.() && extSpecs.autoClearItems) writeXmlAttr(extAttrs, extSpecs.autoClearItems, 'true');
 				const instanceValue = typedObj.getInstanceValue?.() ?? 0;
 				const instanceMax = typedObj.getInstanceMax?.() ?? 0;
 				const instanceMin = typedObj.getInstanceMin?.() ?? 0;

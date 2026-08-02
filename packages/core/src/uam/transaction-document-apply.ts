@@ -8,7 +8,13 @@ import type { GLoader3D } from '../properties/g-loader-3d.js';
 import type { GTextField } from '../properties/g-text-field.js';
 import type { Package } from '../properties/package.js';
 import type { Transition } from '../properties/transition.js';
-import { tryReadJtaSize } from '../utils/jta-parser.js';
+import { probeRasterImageDimensions, rasterImageFormatFromFileName } from '../utils/image-info.js';
+import {
+	applyDerivedMovieClipModel,
+	deriveMovieClipModelFromJta,
+	type DerivedMovieClipModel,
+} from '../utils/jta-parser.js';
+import { normalizeResourceFolderPath, resourceFolderName, resourceFolderParentPath } from '../utils/resource-folder.js';
 import {
 	materializeAssetResource,
 	materializeDisplayNode,
@@ -18,6 +24,7 @@ import {
 	materializeUamComponentInstanceProperties,
 	materializeUamComponentProperties,
 	materializeUamGraphProperties,
+	materializeUamGroupProperties,
 	materializeUamImageResourceProperties,
 	materializeUamListProperties,
 	materializeUamLoaderProperties,
@@ -38,6 +45,7 @@ import {
 	COMMON_DISPLAY_PROPERTY_TYPES,
 	GROUPABLE_DISPLAY_PROPERTY_TYPES,
 	TEXT_DISPLAY_PROPERTY_TYPES,
+	renamedResourceFileName,
 	type UamAttachableDisplayNode,
 	withDefaultOwnPackageRef,
 } from './transaction-shared.js';
@@ -171,6 +179,10 @@ function resolveUniqueGear(node: GObject, selector: UamGearSelector) {
 function applyCommonDisplayProps(target: CommonDisplayPropTarget, props: UamDisplayNodePropsUpdate): void {
 	if (props.position) target.setXY(props.position.x, props.position.y);
 	if (props.size) target.setSize(props.size.width, props.size.height);
+	if (props.locked !== undefined) target.setLocked(props.locked);
+	if (props.aspect !== undefined) target.setAspect(props.aspect);
+	if (props.minSize !== undefined) target.setMinWidth(props.minSize.width).setMinHeight(props.minSize.height);
+	if (props.maxSize !== undefined) target.setMaxWidth(props.maxSize.width).setMaxHeight(props.maxSize.height);
 	if (props.pivot !== undefined || props.pivotAsAnchor !== undefined) {
 		const pivotTarget = target as CommonDisplayPropTarget & {
 			getPivotX(): number;
@@ -191,11 +203,17 @@ function applyCommonDisplayProps(target: CommonDisplayPropTarget, props: UamDisp
 			props.pivotAsAnchor ?? pivotTarget.getPivotAsAnchor?.() ?? false,
 		);
 	}
+	if (props.scale !== undefined) target.setScale(props.scale.x, props.scale.y);
+	if (props.skew !== undefined) target.setSkew(props.skew.x, props.skew.y);
 	if (props.visible !== undefined) target.setVisible(props.visible);
 	if (props.touchable !== undefined) target.setTouchable(props.touchable);
 	if (props.grayed !== undefined) target.setGrayed(props.grayed);
 	if (props.alpha !== undefined) target.setAlpha(props.alpha);
 	if (props.rotation !== undefined) target.setRotation(props.rotation);
+	if (props.tooltips !== undefined) target.setTooltips(props.tooltips);
+	if (props.blendMode !== undefined) target.setBlendMode(props.blendMode);
+	if (props.filter !== undefined) target.setFilter(props.filter);
+	if (props.filterData !== undefined) target.setFilterData(props.filterData);
 	if (props.customData !== undefined) target.setCustomData(props.customData);
 }
 
@@ -217,6 +235,20 @@ function insertChildAtIndex(component: Component, child: GObject, atIndex: numbe
 	const orderedChildren = [...children];
 	orderedChildren.splice(atIndex, 0, child);
 	reorderChildren(component, orderedChildren);
+}
+
+function insertResourceAtIndex(
+	pkg: Package,
+	createResource: () => Parameters<Package['addResource']>[0],
+	atIndex: number,
+): void {
+	const resources = pkg.listResources();
+	if (!Number.isInteger(atIndex) || atIndex < 0 || atIndex > resources.length) {
+		throw new Error(`addResource.atIndex ${atIndex} is out of bounds for package "${pkg.getId()}".`);
+	}
+	resources.splice(atIndex, 0, createResource());
+	for (const current of pkg.listResources()) pkg.removeResource(current);
+	for (const ordered of resources) pkg.addResource(ordered);
 }
 
 function validateControllerModelAgainstComponent(component: Component, model: UamControllerModel, owner: string): void {
@@ -363,15 +395,8 @@ function resourceNameFromFileName(fileName: string): string {
 	return extensionIndex > 0 ? fileName.slice(0, extensionIndex) : fileName;
 }
 
-function renamedAssetFileName(resource: MutableAssetResource, requestedName: string): string {
-	if (requestedName.includes('.')) return requestedName;
-	const previousFileName = getAssetFileName(resource);
-	const extensionIndex = previousFileName.lastIndexOf('.');
-	return extensionIndex > 0 ? `${requestedName}${previousFileName.slice(extensionIndex)}` : requestedName;
-}
-
 function renameBinaryAssetResource(resource: MutableAssetResource, requestedName: string): void {
-	const fileName = renamedAssetFileName(resource, requestedName);
+	const fileName = renamedResourceFileName(getAssetFileName(resource), requestedName);
 	if (!fileName) throw new Error(`Resource "${resource.getName()}" does not define a primary source file.`);
 	setAssetFileName(resource, fileName);
 	resource.setName(resourceNameFromFileName(fileName));
@@ -430,6 +455,58 @@ function replaceGearOnDisplayNode(
 
 export function applyDocumentOperation(doc: Document, operation: UamTransactionOperation): void {
 	switch (operation.kind) {
+		case 'updateProjectSettings':
+			doc.getRoot().setSettings(structuredClone(operation.settings));
+			return;
+		case 'updatePackageSettings': {
+			const pkg = resolvePackage(doc, operation.selector);
+			pkg
+				.setCompressPNG(operation.settings.compressPNG)
+				.setJpegQuality(operation.settings.jpegQuality);
+			if (!operation.settings.publish) {
+				pkg
+					.setPublishName('')
+					.setPublishPath('')
+					.setPublishBranchPath('')
+					.setPublishPackageCount(0)
+					.setGenCode(false)
+					.setCodePath('')
+					.setSourceAtlasSettings({
+						useGlobal: true,
+						maxSize: 2048,
+						sizeOption: 'pot',
+						forceSquare: false,
+						allowRotation: false,
+						paging: true,
+						extractAlpha: false,
+						maxIndex: 10,
+						atlases: [],
+						excludedResourceIds: [],
+					});
+				return;
+			}
+			const publish = operation.settings.publish;
+			pkg
+				.setPublishName(publish.name)
+				.setPublishPath(publish.path)
+				.setPublishBranchPath(publish.branchPath)
+				.setPublishPackageCount(publish.packageCount)
+				.setGenCode(publish.genCode)
+				.setCodePath(publish.codePath)
+				.setSourceAtlasSettings({
+					useGlobal: publish.useGlobalAtlasSettings,
+					maxSize: publish.maxAtlasSize,
+					sizeOption: publish.sizeOption,
+					forceSquare: publish.forceSquare,
+					allowRotation: publish.allowRotation,
+					paging: publish.paging,
+					extractAlpha: publish.extractAlpha,
+					maxIndex: publish.maxAtlasIndex,
+					atlases: publish.atlases,
+					excludedResourceIds: publish.excludedResourceIds,
+				});
+			return;
+		}
 		case 'renameResource': {
 			const { resource } = resolveResource(doc, operation.selector);
 			if (resource.propertyType === PropertyType.COMPONENT) {
@@ -442,6 +519,60 @@ export function applyDocumentOperation(doc: Document, operation: UamTransactionO
 		case 'moveResource': {
 			const { resource } = resolveResource(doc, operation.selector);
 			resource.setPath(operation.toPath);
+			return;
+		}
+		case 'setResourceFavorite': {
+			resolveResource(doc, operation.selector).resource.setFavorite(operation.favorite);
+			return;
+		}
+		case 'setResourceFolderFavorite': {
+			const pkg = resolvePackage(doc, operation.selector);
+			const branch = operation.selector.branch ?? '';
+			const folders = pkg.listResourceFolders();
+			const folder = folders.find((candidate) => (
+				candidate.branch === branch && candidate.path === operation.selector.path
+			));
+			if (!folder) throw new Error(`Resource folder "${branch}:${operation.selector.path}" was not found.`);
+			folder.favorite = operation.favorite;
+			pkg.setResourceFolders(folders);
+			return;
+		}
+		case 'setResourceExported': {
+			resolveResource(doc, operation.selector).resource.setExported(operation.exported);
+			return;
+		}
+		case 'addResourceFolder': {
+			const pkg = resolvePackage(doc, operation.selector);
+			pkg.setResourceFolders([...pkg.listResourceFolders(), {
+				branch: operation.branch ?? '',
+				path: operation.path,
+				favorite: operation.favorite ?? false,
+				atlas: operation.atlas ?? '',
+			}]);
+			return;
+		}
+		case 'renameResourceFolder':
+		case 'moveResourceFolder':
+		case 'removeResourceFolder': {
+			const pkg = resolvePackage(doc, operation.selector);
+			const branch = operation.selector.branch ?? '';
+			const folders = pkg.listResourceFolders();
+			const index = folders.findIndex((folder) => (
+				folder.branch === branch && folder.path === operation.selector.path
+			));
+			if (index < 0) throw new Error(`Resource folder "${branch}:${operation.selector.path}" was not found.`);
+			if (operation.kind === 'removeResourceFolder') {
+				folders.splice(index, 1);
+			} else if (operation.kind === 'renameResourceFolder') {
+				folders[index]!.path = normalizeResourceFolderPath(
+					`${resourceFolderParentPath(folders[index]!.path)}/${operation.newName}`,
+				);
+			} else {
+				folders[index]!.path = normalizeResourceFolderPath(
+					`${operation.toPath}/${resourceFolderName(folders[index]!.path)}`,
+				);
+			}
+			pkg.setResourceFolders(folders);
 			return;
 		}
 		case 'setImageResourceProps': {
@@ -460,18 +591,40 @@ export function applyDocumentOperation(doc: Document, operation: UamTransactionO
 			if (pkg.getResourceById(operation.resource.id)) {
 				throw new Error(`Resource "${operation.resource.id}" already exists in package "${operation.selector.packageId}".`);
 			}
-			pkg.addResource(materializeAssetResource(doc, operation.resource));
+			insertResourceAtIndex(
+				pkg,
+				() => materializeAssetResource(doc, operation.resource),
+				operation.atIndex === undefined ? pkg.listResources().length : operation.atIndex,
+			);
 			return;
 		}
 		case 'replaceResourceBytes': {
 			const { resource } = resolveResource(doc, operation.selector);
-			replaceBinaryAssetBytes(doc, asMutableAssetResource(resource), operation.sourceBytes);
-			if (resource.propertyType === PropertyType.MOVIE_CLIP_RESOURCE) {
-				const size = tryReadJtaSize(operation.sourceBytes);
-				if (size) {
-					const movieClip = resource as ReturnType<Document['createMovieClipResource']>;
-					movieClip.setWidth(size.width).setHeight(size.height);
+			let imageInfo: ReturnType<typeof probeRasterImageDimensions> = null;
+			let movieClipModel: DerivedMovieClipModel | null = null;
+			if (resource.propertyType === PropertyType.IMAGE_RESOURCE) {
+				const fileName = getAssetFileName(asMutableAssetResource(resource));
+				const expectedFormat = rasterImageFormatFromFileName(fileName);
+				imageInfo = probeRasterImageDimensions(operation.sourceBytes);
+				if (!expectedFormat) {
+					throw new Error(`Image resource "${resource.getName()}" uses an unsupported source format.`);
 				}
+				if (!imageInfo || imageInfo.format !== expectedFormat) {
+					throw new Error(`Image replacement bytes do not match source file "${fileName}".`);
+				}
+			} else if (resource.propertyType === PropertyType.MOVIE_CLIP_RESOURCE) {
+				movieClipModel = deriveMovieClipModelFromJta(operation.sourceBytes);
+			}
+			replaceBinaryAssetBytes(doc, asMutableAssetResource(resource), operation.sourceBytes);
+			if (resource.propertyType === PropertyType.IMAGE_RESOURCE && imageInfo) {
+				const image = resource as ReturnType<Document['createImageResource']>;
+				image.setWidth(imageInfo.width).setHeight(imageInfo.height);
+			} else if (resource.propertyType === PropertyType.MOVIE_CLIP_RESOURCE && movieClipModel) {
+				applyDerivedMovieClipModel(
+					doc,
+					resource as ReturnType<Document['createMovieClipResource']>,
+					movieClipModel,
+				);
 			}
 			return;
 		}
@@ -522,6 +675,15 @@ export function applyDocumentOperation(doc: Document, operation: UamTransactionO
 				materializeUamGraphProperties(
 					node as ReturnType<Document['createGGraph']>,
 					operation.props.graphProperties,
+				);
+			}
+			if (operation.props.groupProperties !== undefined) {
+				if (node.propertyType !== PropertyType.G_GROUP) {
+					throw new Error(`Group display props are not supported on display node type "${node.propertyType}".`);
+				}
+				materializeUamGroupProperties(
+					node as ReturnType<Document['createGGroup']>,
+					operation.props.groupProperties,
 				);
 			}
 			if (operation.props.loaderProperties !== undefined) {

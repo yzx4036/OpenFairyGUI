@@ -7,11 +7,7 @@ import type {
 import { UAM_SUPPORTED_MATERIALIZATION_SCOPE } from './model.js';
 
 export function cloneSettings(settings: ProjectSettings): ProjectSettings {
-	return {
-		publish: { ...(settings.publish ?? {}) },
-		common: { ...(settings.common ?? {}) },
-		adaptation: { ...(settings.adaptation ?? {}) },
-	};
+	return structuredClone(settings);
 }
 
 export function ensureSupportedResourceKind(kind: string): void {
@@ -62,5 +58,10 @@ export function liftEdgeInsets(edgeInsets: UamEdgeInsets): UamEdgeInsets {
 }
 
 export function cloneListItems(items: UamListItemData[]): UamListItemData[] {
-	return items.map((item) => ({ ...item }));
+	return items.map((item) => ({
+		...item,
+		...(item.propertyOverrides?.length
+			? { propertyOverrides: item.propertyOverrides.map((property) => ({ ...property })) }
+			: {}),
+	}));
 }

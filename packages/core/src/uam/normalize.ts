@@ -36,6 +36,7 @@ import type {
 	UamLookGearBinding,
 	UamLookGearValue,
 	UamMovieClipNode,
+	UamMovieClipResourceProperties,
 	UamPackage,
 	UamPackagePublish,
 	UamPlainTextProperties,
@@ -43,6 +44,7 @@ import type {
 	UamProgressBarNode,
 	UamRelation,
 	UamResource,
+	UamResourceFolder,
 	UamResourceRef,
 	UamRichTextNode,
 	UamScrollBarNode,
@@ -60,6 +62,8 @@ import type {
 	UamXYGearBinding,
 	UamXYGearValue,
 } from './model.js';
+import { normalizeResourceFolderPath } from '../utils/resource-folder.js';
+import { cloneSettings } from './bridge-shared.js';
 
 function normalizePackagePublish(publish: UamPackagePublish | null | undefined): UamPackagePublish | null {
 	if (!publish) return null;
@@ -70,6 +74,22 @@ function normalizePackagePublish(publish: UamPackagePublish | null | undefined):
 		packageCount: publish.packageCount ?? 0,
 		genCode: publish.genCode ?? false,
 		codePath: publish.codePath ?? '',
+		useGlobalAtlasSettings: publish.useGlobalAtlasSettings ?? true,
+		maxAtlasSize: publish.maxAtlasSize ?? 2048,
+		sizeOption: publish.sizeOption === 'npot' || publish.sizeOption === 'mof' ? publish.sizeOption : 'pot',
+		forceSquare: publish.forceSquare ?? false,
+		allowRotation: publish.allowRotation ?? false,
+		paging: publish.paging ?? true,
+		extractAlpha: publish.extractAlpha ?? false,
+		maxAtlasIndex: publish.maxAtlasIndex ?? 10,
+		atlases: (publish.atlases ?? [])
+			.map((atlas) => ({
+				index: atlas.index,
+				name: atlas.name ?? '',
+				compression: atlas.compression ?? false,
+			}))
+			.sort((left, right) => left.index - right.index),
+		excludedResourceIds: [...(publish.excludedResourceIds ?? [])],
 	};
 }
 
@@ -139,6 +159,7 @@ function normalizeComponentInstanceProperties(
 				icon: properties.icon ?? '',
 				visibleItemCount: properties.visibleItemCount ?? 0,
 				selectionController: properties.selectionController ?? '',
+				autoClearItems: properties.autoClearItems ?? false,
 				items: (properties.items ?? []).map((item) => ({
 					title: item.title ?? null,
 					value: item.value ?? null,
@@ -201,6 +222,7 @@ export function createDefaultUamComponentProperties(): UamComponentProperties {
 		wholeNumbers: false,
 		changeOnClick: true,
 		fixedGripSize: false,
+		autoClearItems: false,
 		customProperties: [],
 	};
 }
@@ -254,6 +276,7 @@ function normalizeComponentProperties(properties: UamComponentProperties): UamCo
 		wholeNumbers: properties.wholeNumbers ?? false,
 		changeOnClick: properties.changeOnClick ?? true,
 		fixedGripSize: properties.fixedGripSize ?? false,
+		autoClearItems: properties.autoClearItems ?? false,
 		customProperties: (properties.customProperties ?? []).map((property) => ({ ...property })),
 	};
 }
@@ -269,6 +292,9 @@ function normalizeListItems(items: UamListItemData[] | undefined): UamListItemDa
 		level: item.level ?? 0,
 		isFolder: item.isFolder ?? null,
 		controllers: item.controllers ?? null,
+		...(item.propertyOverrides?.length
+			? { propertyOverrides: item.propertyOverrides.map((property) => ({ ...property })) }
+			: {}),
 	}));
 }
 
@@ -492,8 +518,6 @@ export function createDefaultUamTextProperties(): UamTextProperties {
 		font: '',
 		fontSize: 12,
 		color: '#000000',
-		minSize: { width: 0, height: 0 },
-		maxSize: { width: 0, height: 0 },
 		align: 0,
 		vAlign: 0,
 		leading: 3,
@@ -535,8 +559,6 @@ function normalizeTextProperties(properties: UamTextProperties): UamTextProperti
 		font: properties.font,
 		fontSize: properties.fontSize,
 		color: normalizeColor(properties.color),
-		minSize: properties.minSize ? { ...properties.minSize } : properties.minSize,
-		maxSize: properties.maxSize ? { ...properties.maxSize } : properties.maxSize,
 		align: properties.align,
 		vAlign: properties.vAlign,
 		leading: properties.leading,
@@ -575,13 +597,29 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 			width: node.size?.width ?? 0,
 			height: node.size?.height ?? 0,
 		},
+		locked: node.locked ?? false,
+		aspect: node.aspect ?? false,
+		minSize: {
+			width: node.minSize?.width ?? 0,
+			height: node.minSize?.height ?? 0,
+		},
+		maxSize: {
+			width: node.maxSize?.width ?? 0,
+			height: node.maxSize?.height ?? 0,
+		},
 		pivot: normalizePoint(node.pivot),
 		pivotAsAnchor: node.pivotAsAnchor ?? false,
+		scale: { x: node.scale?.x ?? 1, y: node.scale?.y ?? 1 },
+		skew: normalizePoint(node.skew),
 		visible: node.visible ?? true,
 		touchable: node.touchable ?? true,
 		grayed: node.grayed ?? false,
 		alpha: node.alpha ?? 1,
 		rotation: node.rotation ?? 0,
+		tooltips: node.tooltips ?? '',
+		blendMode: node.blendMode ?? 'normal',
+		filter: node.filter ?? '',
+		filterData: node.filterData ?? '',
 		customData: node.customData ?? '',
 		relations: normalizeRelations(node.relations),
 		gears: (node.gears ?? []).map((gear) => normalizeGearBinding(gear)),
@@ -629,6 +667,9 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				...base,
 				group: node.group ?? '',
 				resource: normalizeResourceRef(node.resource),
+				...(node.propertyOverrides?.length
+					? { propertyOverrides: node.propertyOverrides.map((property) => ({ ...property })) }
+					: {}),
 				...(node.instanceProperties
 					? { instanceProperties: normalizeComponentInstanceProperties(node.instanceProperties) }
 					: {}),
@@ -664,6 +705,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				clipSoftness: normalizePoint(list.clipSoftness),
 				scrollItemToViewOnClick: list.scrollItemToViewOnClick ?? true,
 				foldInvisibleItems: list.foldInvisibleItems ?? false,
+				autoClearItems: list.autoClearItems ?? false,
 				listItems: normalizeListItems(list.listItems),
 				pageController: list.pageController ?? '',
 				controllerOverrides: list.controllerOverrides ?? '',
@@ -686,15 +728,9 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 			return {
 				kind: 'graph',
 				...base,
-				locked: graph.locked ?? false,
-				minWidth: graph.minWidth ?? 0,
-				maxWidth: graph.maxWidth ?? 0,
-				minHeight: graph.minHeight ?? 0,
-				maxHeight: graph.maxHeight ?? 0,
 				pivot: normalizePoint(graph.pivot),
 				pivotAsAnchor: graph.pivotAsAnchor ?? false,
 				group: graph.group ?? '',
-				skew: normalizePoint(graph.skew),
 				graphType: graph.graphType ?? 0,
 				lineSize: graph.lineSize ?? 1,
 				lineColor: graph.lineColor ?? '#000000',
@@ -711,7 +747,6 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 			return {
 				kind: 'group',
 				...base,
-				locked: group.locked ?? false,
 				group: group.group ?? '',
 				layout: group.layout ?? 0,
 				lineGap: group.lineGap ?? 0,
@@ -728,10 +763,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				kind: 'loader',
 				...base,
 				pivot: normalizePoint(loader.pivot),
-				scale: { x: loader.scale?.x ?? 1, y: loader.scale?.y ?? 1 },
 				url: loader.url ?? '',
-				filter: loader.filter ?? '',
-				filterData: loader.filterData ?? '',
 				fill: loader.fill ?? 0,
 				shrinkOnly: loader.shrinkOnly ?? false,
 				autoSize: loader.autoSize ?? false,
@@ -776,8 +808,6 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				group: movieClip.group ?? '',
 				resource: normalizeResourceRef(movieClip.resource),
 				fileName: movieClip.fileName ?? '',
-				filter: movieClip.filter ?? '',
-				filterData: movieClip.filterData ?? '',
 				playing: movieClip.playing ?? true,
 				frame: movieClip.frame ?? 0,
 				color: movieClip.color ?? '#FFFFFF',
@@ -980,6 +1010,16 @@ export function createDefaultUamImageResourceProperties(): UamImageResourcePrope
 	};
 }
 
+export function createDefaultUamMovieClipResourceProperties(): UamMovieClipResourceProperties {
+	return {
+		interval: 0,
+		repeatDelay: 0,
+		swing: false,
+		smoothing: true,
+		frames: [],
+	};
+}
+
 function normalizeImageResourceProperties(
 	properties: UamImageResourceProperties,
 ): UamImageResourceProperties {
@@ -993,6 +1033,26 @@ function normalizeImageResourceProperties(
 		scaleOption: properties.scaleOption,
 		scale9Grid: properties.scale9Grid ? [...properties.scale9Grid] : null,
 		tileGridIndice: properties.tileGridIndice,
+	};
+}
+
+function normalizeMovieClipResourceProperties(
+	properties: UamMovieClipResourceProperties,
+): UamMovieClipResourceProperties {
+	if (!properties) return properties;
+	return {
+		interval: properties.interval,
+		repeatDelay: properties.repeatDelay,
+		swing: properties.swing,
+		smoothing: properties.smoothing,
+		frames: properties.frames.map((frame) => ({
+			rectX: frame.rectX,
+			rectY: frame.rectY,
+			rectWidth: frame.rectWidth,
+			rectHeight: frame.rectHeight,
+			addDelay: frame.addDelay,
+			spriteId: frame.spriteId,
+		})),
 	};
 }
 
@@ -1019,6 +1079,18 @@ function normalizeAssetResource(resource: UamAssetResource): UamAssetResource {
 				? { width: resource.dimensions.width ?? 0, height: resource.dimensions.height ?? 0 }
 				: null,
 			image: normalizeImageResourceProperties(resource.image),
+		};
+	}
+	if (resource.kind === 'movieClip') {
+		return {
+			...base,
+			kind: 'movieClip',
+			fileName: resource.fileName,
+			dimensions: {
+				width: resource.dimensions?.width ?? 0,
+				height: resource.dimensions?.height ?? 0,
+			},
+			movieClip: normalizeMovieClipResourceProperties(resource.movieClip),
 		};
 	}
 	return {
@@ -1051,25 +1123,50 @@ function normalizeResource(resource: UamResource): UamResource {
 }
 
 function normalizePackage(pkg: UamPackage): UamPackage {
+	const resources = (pkg.resources ?? []).map(normalizeResource);
+	const folders = (pkg.folders ?? []).map((folder): UamResourceFolder => ({
+		branch: folder.branch ?? '',
+		path: normalizeResourceFolderPath(folder.path),
+		favorite: folder.favorite ?? false,
+		atlas: folder.atlas ?? '',
+	}));
+	const folderKeys = new Set(folders.map((folder) => `${folder.branch}\0${folder.path}`));
+	for (const resource of resources) {
+		const segments = normalizeResourceFolderPath(resource.path).split('/').filter(Boolean);
+		let path = '/';
+		for (const segment of segments) {
+			path = `${path}${segment}/`;
+			const key = `${resource.branch}\0${path}`;
+			if (folderKeys.has(key)) continue;
+			folderKeys.add(key);
+			folders.push({ branch: resource.branch, path, favorite: false, atlas: '' });
+		}
+	}
 	return {
 		id: pkg.id,
 		name: pkg.name,
+		compressPNG: pkg.compressPNG ?? null,
+		jpegQuality: pkg.jpegQuality ?? null,
 		publish: normalizePackagePublish(pkg.publish),
-		resources: (pkg.resources ?? []).map(normalizeResource),
+		branchNames: [...(pkg.branchNames ?? [])],
+		folders,
+		resources,
 	};
 }
 
 export function normalizeUamProject(project: UamProject): UamProject {
+	const settings = project.settings ?? {};
 	return {
 		projectId: project.projectId,
 		projectType: project.projectType ?? 0,
 		version: project.version || '3.0',
-		branches: [...(project.branches ?? [])],
-		settings: {
-			publish: project.settings?.publish ?? {},
-			common: project.settings?.common ?? {},
-			adaptation: project.settings?.adaptation ?? {},
-		},
+		branches: [...new Set(project.branches ?? [])].sort((left, right) => left.localeCompare(right)),
+		settings: cloneSettings({
+			...settings,
+			publish: settings.publish ?? {},
+			common: settings.common ?? {},
+			adaptation: settings.adaptation ?? {},
+		}),
 		packages: (project.packages ?? []).map(normalizePackage),
 	};
 }

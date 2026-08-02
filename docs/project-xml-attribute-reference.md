@@ -84,6 +84,7 @@
 | 属性名 | Alias | 说明 |
 |---|---|---|
 | `atlas` |  | 动画资源纹理集模式 |
+| `smoothing` |  | 是否允许平滑；缺省为 `true`，仅在 `false` 时写回 |
 
 ### `resources > font`
 
@@ -170,17 +171,34 @@
 | `propertyId` |  | 对外暴露的属性类型，`0` 表示文本、`1` 表示图标 |
 | `label` |  | 编辑器显示标签 |
 
-### 显示对象公共标识层
+### 显示对象公共属性
 
-以下属性由编辑器公共 `FObject` 读写链路承载，适用于全部 display-list 对象。
+以下属性适用于全部具体 display-list 对象。后续各标签表只补充标签专属属性或重申重点字段；未重复列出不代表该公共属性不适用。
 
 | 属性名 | Alias | 说明 |
 |---|---|---|
 | `id` |  | 对象标识 |
 | `name` |  | 对象名 |
 | `relation` |  | 关系引用字段 |
+| `xy` |  | 位置 |
+| `size` |  | 尺寸 |
+| `locked` |  | 是否锁定 |
+| `restrictSize` |  | 尺寸限制 |
+| `aspect` |  | 宽高约束 |
 | `pivot` |  | pivot |
 | `anchor` |  | 是否以 pivot 作为坐标锚点 |
+| `scale` |  | 缩放 |
+| `skew` |  | 倾斜，格式为 `x,y` |
+| `rotation` |  | 旋转 |
+| `alpha` |  | 透明度 |
+| `visible` |  | 是否可见 |
+| `touchable` |  | 是否可触摸 |
+| `grayed` |  | 是否置灰 |
+| `tooltips` |  | tooltip 文本 |
+| `customData` |  | 自定义数据 |
+| `blend` |  | 混合模式 |
+| `filter` |  | 滤镜类型 |
+| `filterData` |  | 滤镜数据 |
 
 ### `<component>` 子组件实例
 
@@ -589,6 +607,7 @@
 | `icon` |  | 图标 |
 | `visibleItemCount` |  | 可见条目数 |
 | `selectionController` |  | 选择控制器 |
+| `autoClearItems` |  | 自动清空项目 |
 
 ### `<ProgressBar>`
 
@@ -708,6 +727,16 @@
 | `level` |  | 层级 |
 | `isFolder` |  | 是否文件夹 |
 | `controllers` |  | controller 覆盖 |
+
+### `<component><property>` / `<list><item><property>`
+
+| 属性名 | Alias | 说明 |
+|---|---|---|
+| `target` |  | 被覆盖对象标识，不能为空 |
+| `propertyId` |  | 非负整数属性编号 |
+| `value` |  | 覆盖值；空字符串是有效值 |
+
+同一宿主下的 `property` 子节点按 XML 顺序保存。
 
 ### `<ComboBox><item>`
 

@@ -3,10 +3,18 @@ import {
 	type Document,
 	GearType,
 	type Package,
+	type MovieClipResource,
 	type Transform,
 	TransitionActionType,
 } from '@openfairygui/core';
 import type { AtlasRasterBackend } from './publish/contracts.js';
+import {
+	isComponentResource,
+	isFontResource,
+	isImageResource,
+	isMovieClipResource,
+	isSkeletonResource,
+} from './publish/package-context.js';
 import { collectPackageResourceReferences } from './publish/resource-references.js';
 import type { ExtrasMap, HasOptionalSrc, HasOptionalUrl } from './shared-types.js';
 import { createTransform } from './utils.js';
@@ -14,17 +22,13 @@ import {
 	collectFontTexture,
 	collectImage,
 	collectMovieClipFrames,
-	isComponentResource,
-	isFontResource,
-	isImageResource,
-	isMovieClipResource,
 	isPackableResource,
-	isSkeletonResource,
 	resolveFontFileName,
 	type InputItem,
 	type PackageResource,
 } from './atlas/inputs.js';
 import { emitAtlasInputs, sortResourcesByOrder } from './atlas/packing.js';
+import type { PreparedJtaData } from './atlas/jta.js';
 
 export interface AtlasOptions {
 	/**
@@ -105,6 +109,12 @@ export interface AtlasOptions {
 	readFileRaw?: (path: string) => Promise<Uint8Array>;
 
 	/**
+	 * MovieClip parse/decode results prepared by publish() before output begins.
+	 * @internal
+	 */
+	preparedMovieClips?: ReadonlyMap<MovieClipResource, PreparedJtaData>;
+
+	/**
 	 * Keep original input order when MaxRects tie-break scores are equal.
 	 * This is an internal publish detail used to mirror editor/CLI behavior.
 	 */
@@ -131,7 +141,10 @@ export interface AtlasOptions {
 }
 
 const ATLAS_DEFAULTS: Required<
-	Omit<AtlasOptions, 'packages' | 'encoder' | 'basePath' | 'outputPath' | 'mkdir' | 'readFileRaw'>
+	Omit<
+		AtlasOptions,
+		'packages' | 'encoder' | 'basePath' | 'outputPath' | 'mkdir' | 'readFileRaw' | 'preparedMovieClips'
+	>
 > = {
 	maxSize: 2048,
 	fast: true,

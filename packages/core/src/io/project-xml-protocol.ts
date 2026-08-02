@@ -52,6 +52,7 @@ const PACKAGE_DESCRIPTION_ATTRS = {
 	hasFavorites: { canonical: 'hasFavorites' },
 	compressPNG: { canonical: 'compressPNG' },
 	jpegQuality: { canonical: 'jpegQuality' },
+	branchNames: { canonical: 'branchNames' },
 } satisfies XmlAttrMap;
 
 const BRANCH_DESCRIPTION_ATTRS = {} satisfies XmlAttrMap;
@@ -63,11 +64,21 @@ const PACKAGE_PUBLISH_ATTRS = {
 	packageCount: { canonical: 'packageCount' },
 	genCode: { canonical: 'genCode' },
 	codePath: { canonical: 'codePath' },
+	maxAtlasSize: { canonical: 'maxAtlasSize' },
+	sizeOption: { canonical: 'sizeOption' },
+	npot: { canonical: 'npot' },
+	square: { canonical: 'square' },
+	rotation: { canonical: 'rotation' },
+	multiPage: { canonical: 'multiPage' },
+	extractAlpha: { canonical: 'extractAlpha' },
+	maxAtlasIndex: { canonical: 'maxAtlasIndex' },
+	excluded: { canonical: 'excluded' },
 } satisfies XmlAttrMap;
 
 const PACKAGE_PUBLISH_ATLAS_ATTRS = {
 	name: { canonical: 'name' },
 	index: { canonical: 'index' },
+	compression: { canonical: 'compression' },
 } satisfies XmlAttrMap;
 
 const PACKAGE_RESOURCE_BASE_ATTRS = {
@@ -76,6 +87,14 @@ const PACKAGE_RESOURCE_BASE_ATTRS = {
 	path: { canonical: 'path' },
 	exported: { canonical: 'exported' },
 	favorite: { canonical: 'favorite' },
+} satisfies XmlAttrMap;
+
+const PACKAGE_RESOURCE_FOLDER_ATTRS = {
+	id: PACKAGE_RESOURCE_BASE_ATTRS.id,
+	name: PACKAGE_RESOURCE_BASE_ATTRS.name,
+	path: PACKAGE_RESOURCE_BASE_ATTRS.path,
+	favorite: PACKAGE_RESOURCE_BASE_ATTRS.favorite,
+	atlas: { canonical: 'atlas' },
 } satisfies XmlAttrMap;
 
 const PACKAGE_IMAGE_RESOURCE_ATTRS = {
@@ -99,6 +118,7 @@ const PACKAGE_FONT_RESOURCE_ATTRS = {
 
 const PACKAGE_MOVIE_CLIP_RESOURCE_ATTRS = {
 	atlas: { canonical: 'atlas' },
+	smoothing: { canonical: 'smoothing' },
 } satisfies XmlAttrMap;
 
 const PACKAGE_SKELETON_RESOURCE_ATTRS = {
@@ -190,6 +210,25 @@ const FILTER_ATTRS = {
 	filter: { canonical: 'filter' },
 	filterData: { canonical: 'filterData' },
 } satisfies XmlAttrMap;
+
+const BLEND_ATTRS = {
+	blendMode: { canonical: 'blend' },
+} satisfies XmlAttrMap;
+
+const COMMON_DISPLAY_OBJECT_ATTRS = mergeAttrs(
+	XY_SIZE_ATTRS,
+	LOCKED_ATTRS,
+	RESTRICT_SIZE_ATTRS,
+	ASPECT_ATTRS,
+	PIVOT_ATTRS,
+	ANCHOR_ATTRS,
+	SCALE_ATTRS,
+	SKEW_ATTRS,
+	COMMON_DISPLAY_STATE_ATTRS,
+	INSTANCE_MISC_PANEL_ATTRS,
+	BLEND_ATTRS,
+	FILTER_ATTRS,
+);
 
 const ROOT_COMPONENT_PANEL_ATTRS = {
 	size: { canonical: 'size' },
@@ -413,6 +452,7 @@ const COMBOBOX_EXTENSION_ATTRS = {
 	icon: { canonical: 'icon' },
 	visibleItemCount: { canonical: 'visibleItemCount' },
 	selectionController: { canonical: 'selectionController' },
+	autoClearItems: { canonical: 'autoClearItems' },
 } satisfies XmlAttrMap;
 
 const PROGRESSBAR_EXTENSION_ATTRS = {
@@ -446,6 +486,12 @@ const CUSTOM_PROPERTY_ATTRS = {
 	target: { canonical: 'target' },
 	propertyId: { canonical: 'propertyId' },
 	label: { canonical: 'label' },
+} satisfies XmlAttrMap;
+
+const PROPERTY_OVERRIDE_ATTRS = {
+	target: { canonical: 'target' },
+	propertyId: { canonical: 'propertyId' },
+	value: { canonical: 'value' },
 } satisfies XmlAttrMap;
 
 const GEAR_ATTRS = {
@@ -534,6 +580,7 @@ const PACKAGE_PUBLISH_NODE = defineNode(
 	},
 );
 const PACKAGE_RESOURCE_NODE = defineNode(PACKAGE_RESOURCE_BASE_ATTRS);
+const PACKAGE_RESOURCE_FOLDER_NODE = defineNode(PACKAGE_RESOURCE_FOLDER_ATTRS);
 const PACKAGE_IMAGE_RESOURCE_NODE = defineNode(PACKAGE_IMAGE_RESOURCE_ATTRS);
 const PACKAGE_FONT_RESOURCE_NODE = defineNode(PACKAGE_FONT_RESOURCE_ATTRS);
 const PACKAGE_MOVIE_CLIP_RESOURCE_NODE = defineNode(PACKAGE_MOVIE_CLIP_RESOURCE_ATTRS);
@@ -550,10 +597,13 @@ const SLIDER_EXTENSION_NODE = defineNode(SLIDER_EXTENSION_ATTRS);
 const SCROLLBAR_EXTENSION_NODE = defineNode(SCROLLBAR_EXTENSION_ATTRS);
 const RELATION_NODE = defineNode(RELATION_ATTRS);
 const CUSTOM_PROPERTY_NODE = defineNode(CUSTOM_PROPERTY_ATTRS);
+const PROPERTY_OVERRIDE_NODE = defineNode(PROPERTY_OVERRIDE_ATTRS);
 const GEAR_NODE = defineNode(GEAR_ATTRS);
 const CONTROLLER_ACTION_NODE = defineNode(CONTROLLER_ACTION_ATTRS);
 const TRANSITION_ITEM_NODE = defineNode(TRANSITION_ITEM_ATTRS);
-const LIST_ITEM_NODE = defineNode(LIST_ITEM_ATTRS);
+const LIST_ITEM_NODE = defineNode(LIST_ITEM_ATTRS, {
+	property: PROPERTY_OVERRIDE_NODE,
+});
 const COMBOBOX_ITEM_NODE = defineNode(COMBOBOX_ITEM_ATTRS);
 
 const WITH_RELATION_CHILDREN = {
@@ -631,6 +681,7 @@ const TRANSITION_NODE = defineNode(
 
 const IMAGE_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		IMAGE_PANEL_ATTRS,
 		XY_SIZE_ATTRS,
 		LOCKED_ATTRS,
@@ -649,6 +700,7 @@ const IMAGE_NODE = defineNode(
 
 const GRAPH_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		XY_SIZE_ATTRS,
 		LOCKED_ATTRS,
 		RESTRICT_SIZE_ATTRS,
@@ -664,6 +716,7 @@ const GRAPH_NODE = defineNode(
 
 const MOVIE_CLIP_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		MOVIE_CLIP_PANEL_ATTRS,
 		XY_SIZE_ATTRS,
 		PIVOT_ATTRS,
@@ -678,6 +731,7 @@ const MOVIE_CLIP_NODE = defineNode(
 
 const COMPONENT_INSTANCE_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		COMPONENT_INSTANCE_PANEL_ATTRS,
 		XY_SIZE_ATTRS,
 		LOCKED_ATTRS,
@@ -696,11 +750,13 @@ const COMPONENT_INSTANCE_NODE = defineNode(
 		WITH_RELATION_CHILDREN,
 		WITH_GEAR_CHILDREN,
 		WITH_INSTANCE_EXTENSION_CHILDREN,
+		{ property: PROPERTY_OVERRIDE_NODE },
 	),
 );
 
 const LOADER_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		XY_SIZE_ATTRS,
 		PIVOT_ATTRS,
 		ANCHOR_ATTRS,
@@ -713,12 +769,13 @@ const LOADER_NODE = defineNode(
 );
 
 const LOADER3D_NODE = defineNode(
-	mergeAttrs(XY_SIZE_ATTRS, PIVOT_ATTRS, ANCHOR_ATTRS, COMMON_DISPLAY_STATE_ATTRS, LOADER3D_PANEL_ATTRS),
+	mergeAttrs(COMMON_DISPLAY_OBJECT_ATTRS, LOADER3D_PANEL_ATTRS),
 	mergeChildren(WITH_RELATION_CHILDREN, WITH_GEAR_CHILDREN),
 );
 
 const TEXT_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		XY_SIZE_ATTRS,
 		RESTRICT_SIZE_ATTRS,
 		PIVOT_ATTRS,
@@ -734,6 +791,7 @@ const TEXT_NODE = defineNode(
 
 const TEXT_INPUT_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		XY_SIZE_ATTRS,
 		RESTRICT_SIZE_ATTRS,
 		PIVOT_ATTRS,
@@ -749,6 +807,7 @@ const TEXT_INPUT_NODE = defineNode(
 
 const RICH_TEXT_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		XY_SIZE_ATTRS,
 		RESTRICT_SIZE_ATTRS,
 		PIVOT_ATTRS,
@@ -764,6 +823,7 @@ const RICH_TEXT_NODE = defineNode(
 
 const GROUP_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		XY_SIZE_ATTRS,
 		LOCKED_ATTRS,
 		PIVOT_ATTRS,
@@ -780,6 +840,7 @@ const GROUP_NODE = defineNode(
 
 const LIST_NODE = defineNode(
 	mergeAttrs(
+		COMMON_DISPLAY_OBJECT_ATTRS,
 		XY_SIZE_ATTRS,
 		PIVOT_ATTRS,
 		ANCHOR_ATTRS,
@@ -835,6 +896,7 @@ export const PROJECT_XML_PROTOCOL = {
 	packagePublish: PACKAGE_PUBLISH_NODE,
 	packagePublishAtlas: PACKAGE_PUBLISH_ATLAS_NODE,
 	packageResource: PACKAGE_RESOURCE_NODE,
+	packageResourceFolder: PACKAGE_RESOURCE_FOLDER_NODE,
 	packageImageResource: PACKAGE_IMAGE_RESOURCE_NODE,
 	packageFontResource: PACKAGE_FONT_RESOURCE_NODE,
 	packageMovieClipResource: PACKAGE_MOVIE_CLIP_RESOURCE_NODE,
@@ -865,6 +927,7 @@ export const PROJECT_XML_PROTOCOL = {
 	group: GROUP_NODE,
 	list: LIST_NODE,
 	listItem: LIST_ITEM_NODE,
+	propertyOverride: PROPERTY_OVERRIDE_NODE,
 	comboBoxItem: COMBOBOX_ITEM_NODE,
 } satisfies Record<string, XmlNodeProtocol>;
 

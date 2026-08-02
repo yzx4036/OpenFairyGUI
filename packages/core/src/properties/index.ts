@@ -7,7 +7,13 @@ export { ExtensionProperty } from './extension-property.js';
 export { Root } from './root.js';
 
 // Resources
-export { Package } from './package.js';
+export {
+	Package,
+	type PackageAtlasSizeOption,
+	type PackageResourceFolder,
+	type PackageSourceAtlas,
+	type PackageSourceAtlasSettings,
+} from './package.js';
 export { ImageResource, type PixelHitTestData } from './image-resource.js';
 export { MiscResource } from './misc-resource.js';
 export { SoundResource } from './sound-resource.js';
@@ -33,8 +39,8 @@ export { GGroup } from './g-group.js';
 export { GLoader } from './g-loader.js';
 export { GLoader3D } from './g-loader-3d.js';
 export { GMovieClip } from './g-movie-clip.js';
-export { GComponent } from './g-component.js';
-export { GList } from './g-list.js';
+export { GComponent, type GComponentPropertyOverride } from './g-component.js';
+export { GList, type GListItemData } from './g-list.js';
 export {
 	GTree,
 	type GTreeItemTemplateInfo,

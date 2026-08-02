@@ -3,7 +3,7 @@ import type { ProjectReadOptions } from '../io/project-io-contracts.js';
 import type { UamProject } from './model.js';
 import { liftDocumentToUamProject } from './bridge-lift.js';
 import { materializeUamProject } from './bridge-materialize.js';
-import { commitUamProjectSourcePaths, staleSourceFiles } from './project-source-files.js';
+import { commitUamProjectSourcePaths, staleBranchDirectories, staleResourceFolders, staleSourceFiles } from './project-source-files.js';
 
 export { liftDocumentToUamProject } from './bridge-lift.js';
 export {
@@ -12,7 +12,12 @@ export {
 	materializeUamGear,
 	materializeUamProject,
 } from './bridge-materialize.js';
-export { commitUamProjectSourcePaths } from './project-source-files.js';
+export {
+	commitUamProjectSourcePaths,
+	staleBranchDirectories,
+	staleResourceFolders,
+	staleSourceFiles,
+} from './project-source-files.js';
 
 export interface WriteProjectFromUamOptions {
 	/** Previous project state used to safely clean replaced, moved, renamed, or removed package files. */
@@ -28,6 +33,8 @@ export async function writeProjectFromUam(
 ): Promise<void> {
 	await io.writeProject(materializeUamProject(project), projectPath, {
 		staleSourceFiles: options.previousProject ? staleSourceFiles(options.previousProject, project) : [],
+		staleResourceFolders: options.previousProject ? staleResourceFolders(options.previousProject, project) : [],
+		staleBranchDirectories: options.previousProject ? staleBranchDirectories(options.previousProject, project) : [],
 	});
 	commitUamProjectSourcePaths(project);
 }

@@ -2,7 +2,9 @@ import { Document } from '../document.js';
 import type { Component } from '../properties/component.js';
 import type { Package } from '../properties/package.js';
 import type { ProjectSettings } from '../types/settings.js';
-import { tryReadJtaSize } from '../utils/jta-parser.js';
+import { probeRasterImageDimensions } from '../utils/image-info.js';
+import { applyDerivedMovieClipModel, deriveMovieClipModelFromJta } from '../utils/jta-parser.js';
+import { normalizeResourceFolderPath } from '../utils/resource-folder.js';
 import {
 	parseXML,
 	parseXMLPreserveOrder,
@@ -19,56 +21,6 @@ import { readComponentXml } from './component-xml-reader.js';
 import type { ProjectReadOptions } from './project-io-contracts.js';
 
 export type { ProjectReadOptions } from './project-io-contracts.js';
-
-/** Map ease type string to numeric code matching editor's EaseType.parseEaseType. */
-function readPngSize(data: Uint8Array): { width: number; height: number } | null {
-	if (data.length < 24) return null;
-	const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-	for (let i = 0; i < signature.length; i++) {
-		if (data[i] !== signature[i]) return null;
-	}
-	const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-	return {
-		width: view.getUint32(16),
-		height: view.getUint32(20),
-	};
-}
-
-function readJpegSize(data: Uint8Array): { width: number; height: number } | null {
-	if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) return null;
-	let offset = 2;
-	while (offset + 9 < data.length) {
-		if (data[offset] !== 0xff) {
-			offset++;
-			continue;
-		}
-		const marker = data[offset + 1];
-		offset += 2;
-		if (marker === 0xd8 || marker === 0xd9) continue;
-		if (offset + 2 > data.length) return null;
-		const length = (data[offset] << 8) | data[offset + 1];
-		if (length < 2 || offset + length > data.length) return null;
-		const isStartOfFrame = (
-			(marker >= 0xc0 && marker <= 0xc3)
-			|| (marker >= 0xc5 && marker <= 0xc7)
-			|| (marker >= 0xc9 && marker <= 0xcb)
-			|| (marker >= 0xcd && marker <= 0xcf)
-		);
-		if (isStartOfFrame) {
-			if (offset + 7 > data.length) return null;
-			return {
-				height: (data[offset + 3] << 8) | data[offset + 4],
-				width: (data[offset + 5] << 8) | data[offset + 6],
-			};
-		}
-		offset += length;
-	}
-	return null;
-}
-
-function readImageSize(data: Uint8Array): { width: number; height: number } | null {
-	return readPngSize(data) ?? readJpegSize(data);
-}
 
 // Maps XML tag names for display objects to factory method names.
 type XmlNode = Record<string, unknown>;
@@ -89,12 +41,14 @@ interface PackagePublishNode extends XmlNode {
 	packageCount?: string | number;
 	genCode?: string | boolean;
 	codePath?: string;
+	atlas?: XmlNode | XmlNode[];
 }
 
 interface PackageResourcesNode extends Record<string, unknown> {}
 
 interface PackageDescriptionNode extends XmlNode {
 	id?: string;
+	branchNames?: string;
 	publish?: PackagePublishNode;
 	resources?: PackageResourcesNode;
 }
@@ -123,14 +77,18 @@ interface ResourceXmlAttrs extends XmlNode {
 	require?: string;
 	atlasNames?: string;
 	anchor?: string;
+	atlas?: string;
 }
 
 function getOrderedPackageResourceItems(xmlContent: string): Array<{ tagName: string; attrs: ResourceXmlAttrs }> {
 	const ordered = parseXMLPreserveOrder(xmlContent);
-	const packageEntry = ordered.find((entry) => 'packageDescription' in entry);
-	if (!packageEntry) return [];
-	const packageChildren = Array.isArray(packageEntry.packageDescription)
-		? (packageEntry.packageDescription as OrderedXmlEntry[])
+	const descriptionEntry = ordered.find((entry) => 'packageDescription' in entry || 'branchDescription' in entry);
+	if (!descriptionEntry) return [];
+	const description = 'packageDescription' in descriptionEntry
+		? descriptionEntry.packageDescription
+		: descriptionEntry.branchDescription;
+	const packageChildren = Array.isArray(description)
+		? (description as OrderedXmlEntry[])
 		: [];
 	const resourcesEntry = packageChildren.find((entry) => 'resources' in entry);
 	if (!resourcesEntry) return [];
@@ -170,8 +128,11 @@ function assignSetting(
 		case 'adaptation':
 			settings.adaptation = value as ProjectSettings['adaptation'];
 			break;
-		default:
-			settings[key] = value;
+		case 'customProperties':
+			settings.customProperties = value as ProjectSettings['customProperties'];
+			break;
+		case 'i18n':
+			settings.i18n = value as ProjectSettings['i18n'];
 			break;
 	}
 }
@@ -237,6 +198,7 @@ export class ProjectReader {
 		if (branchNames.length > 0) {
 			doc.getRoot().setBranches(branchNames);
 		}
+		this._linkPackageBranchItems(doc);
 
 		// 4. Parse component XMLs (second pass, after all resources registered)
 		for (const [_key, resource] of ctx.resourceMap) {
@@ -254,6 +216,28 @@ export class ProjectReader {
 		}
 
 		return doc;
+	}
+
+	private _linkPackageBranchItems(doc: Document): void {
+		for (const pkg of doc.getRoot().listPackages()) {
+			const branchNames = pkg.listBranchNames();
+			if (branchNames.length === 0) continue;
+			const variants = new Map<string, string>();
+			for (const resource of pkg.listResources()) {
+				const branchName = resource.getBranch();
+				if (!branchName) continue;
+				variants.set(
+					`${branchName}\0${resource.propertyType}\0${resource.getPath()}\0${resource.getName()}`,
+					resource.getId(),
+				);
+			}
+			for (const resource of pkg.listResources()) {
+				if (resource.getBranch()) continue;
+				resource.setBranchItemIds(branchNames.map((branchName) => variants.get(
+					`${branchName}\0${resource.propertyType}\0${resource.getPath()}\0${resource.getName()}`,
+				) ?? ''));
+			}
+		}
 	}
 
 	private async _readPackageBranches(ctx: ReaderContext, options: ProjectReadOptions): Promise<string[]> {
@@ -335,10 +319,31 @@ export class ProjectReader {
 		if (!pkg) {
 			pkg = ctx.document.createPackage(dirName);
 		}
+		if (branchName) pkg.addBranchName(branchName);
+		pkg.setExtras({ ...pkg.getExtras(), _preservePackageResourceOrder: true });
 
 		if (!branchName) {
 			const packageId = readXmlAttr<string>(desc, PROJECT_XML_PROTOCOL.packageDescription.attrs.id) || '';
 			pkg.setId(packageId);
+			const serializedBranchNames = readXmlAttr<string>(
+				desc,
+				PROJECT_XML_PROTOCOL.packageDescription.attrs.branchNames,
+			);
+			if (serializedBranchNames !== undefined) {
+				let parsedBranchNames: unknown;
+				try {
+					parsedBranchNames = JSON.parse(serializedBranchNames);
+				} catch {
+					throw new Error(`Invalid package branchNames for "${dirName}".`);
+				}
+				if (!Array.isArray(parsedBranchNames)
+					|| !parsedBranchNames.every((name): name is string => typeof name === 'string' && name.length > 0)
+					|| new Set(parsedBranchNames).size !== parsedBranchNames.length
+				) {
+					throw new Error(`Invalid package branchNames for "${dirName}".`);
+				}
+				pkg.setBranchNames(parsedBranchNames);
+			}
 			const compressPNG = readXmlAttr<string | boolean>(desc, PROJECT_XML_PROTOCOL.packageDescription.attrs.compressPNG);
 			if (compressPNG !== undefined) pkg.setCompressPNG(parseBool(compressPNG));
 			const jpegQuality = readXmlAttr<string | number>(desc, PROJECT_XML_PROTOCOL.packageDescription.attrs.jpegQuality);
@@ -368,24 +373,61 @@ export class ProjectReader {
 			pkg.setCodePath(
 				readXmlAttr<string>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.codePath) || '',
 			);
+
+			const globalAtlas = ctx.settings.publish?.atlasSetting;
+			const maxAtlasSize = readXmlAttr<string | number>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.maxAtlasSize);
+			const sizeOption = parseBool(readXmlAttr<string | boolean>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.npot))
+				? 'npot'
+				: readXmlAttr<string>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.sizeOption) || globalAtlas?.sizeOption || 'pot';
+			const square = readXmlAttr<string | boolean>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.square);
+			const rotation = readXmlAttr<string | boolean>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.rotation);
+			const multiPage = readXmlAttr<string | boolean>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.multiPage);
+			pkg.setSourceAtlasSettings({
+				useGlobal: maxAtlasSize === undefined,
+				maxSize: parseInt2(maxAtlasSize, globalAtlas?.maxSize ?? 2048),
+				sizeOption: sizeOption === 'npot' || sizeOption === 'mof' ? sizeOption : 'pot',
+				forceSquare: square === undefined ? globalAtlas?.forceSquare ?? false : parseBool(square),
+				allowRotation: rotation === undefined ? globalAtlas?.allowRotation ?? false : parseBool(rotation),
+				paging: multiPage === undefined ? globalAtlas?.paging ?? true : parseBool(multiPage),
+				extractAlpha: parseBool(readXmlAttr<string | boolean>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.extractAlpha)),
+				maxIndex: parseInt2(
+					readXmlAttr<string | number>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.maxAtlasIndex),
+					10,
+				),
+				atlases: ensureArray(publish.atlas).flatMap((value) => {
+					const atlas = getXmlNode<XmlNode>(value);
+					if (!atlas) return [];
+					return [{
+						index: parseInt2(readXmlAttr<string | number>(atlas, PROJECT_XML_PROTOCOL.packagePublishAtlas.attrs.index)),
+						name: readXmlAttr<string>(atlas, PROJECT_XML_PROTOCOL.packagePublishAtlas.attrs.name) || '',
+						compression: parseBool(readXmlAttr<string | boolean>(atlas, PROJECT_XML_PROTOCOL.packagePublishAtlas.attrs.compression)),
+					}];
+				}),
+				excludedResourceIds: (readXmlAttr<string>(publish, PROJECT_XML_PROTOCOL.packagePublish.attrs.excluded) || '')
+					.split(',')
+					.filter(Boolean),
+			});
 		}
 
 		if (pkg.getId()) {
 			ctx.packageMap.set(pkg.getId(), pkg);
 		}
 
-		// Parse resources
-		const resources = desc.resources;
-		if (!resources) return;
-
 		const packageDir = branchName
 			? fs.join(ctx.basePath, `assets_${branchName}`, dirName)
 			: fs.join(ctx.basePath, 'assets', dirName);
+		const resources = desc.resources;
+		const orderedResources = getOrderedPackageResourceItems(content);
+		const folderEntries = orderedResources.length > 0
+			? orderedResources.filter((entry) => entry.tagName === 'folder').map((entry) => entry.attrs)
+			: ensureArray(resources?.folder).map((entry) => getXmlNode<ResourceXmlAttrs>(entry)).filter((entry): entry is ResourceXmlAttrs => !!entry);
+		await this._readPackageFolders(pkg, packageDir, branchName, folderEntries);
+		if (!resources) return;
 
 		const createdResources: Array<ReturnType<Package['listResources']>[number]> = [];
-		const orderedResources = getOrderedPackageResourceItems(content);
 		if (orderedResources.length > 0) {
 			for (const { tagName, attrs } of orderedResources) {
+				if (tagName === 'folder') continue;
 				const resource = this._createResourceFromXML(ctx, pkg, tagName, attrs, packageDir, branchName);
 				if (resource) createdResources.push(resource);
 			}
@@ -412,6 +454,50 @@ export class ProjectReader {
 		}
 	}
 
+	private async _readPackageFolders(
+		pkg: Package,
+		packageDir: string,
+		branch: string,
+		metadataEntries: ResourceXmlAttrs[],
+	): Promise<void> {
+		const metadata = new Map(metadataEntries.map((attrs) => {
+			const path = readXmlAttr<string>(attrs, PROJECT_XML_PROTOCOL.packageResourceFolder.attrs.path) ?? '/';
+			const name = readXmlAttr<string>(attrs, PROJECT_XML_PROTOCOL.packageResourceFolder.attrs.name) ?? '';
+			return [normalizeResourceFolderPath(`${path}/${name}`), attrs] as const;
+		}));
+		const folders = pkg.listResourceFolders();
+		const visit = async (directory: string, parentPath: string, entries?: string[]): Promise<void> => {
+			let names = entries;
+			if (!names) {
+				try {
+					names = await this._fs.readdir(directory);
+				} catch {
+					return;
+				}
+			}
+			for (const name of [...names].sort((left, right) => left.localeCompare(right))) {
+				const childDirectory = this._fs.join(directory, name);
+				let childEntries: string[];
+				try {
+					childEntries = await this._fs.readdir(childDirectory);
+				} catch {
+					continue;
+				}
+				const path = normalizeResourceFolderPath(`${parentPath}/${name}`);
+				const attrs = metadata.get(path);
+				folders.push({
+					branch,
+					path,
+					favorite: parseBool(readXmlAttr<string | boolean>(attrs ?? {}, PROJECT_XML_PROTOCOL.packageResourceFolder.attrs.favorite)),
+					atlas: readXmlAttr<string>(attrs ?? {}, PROJECT_XML_PROTOCOL.packageResourceFolder.attrs.atlas) ?? '',
+				});
+				await visit(childDirectory, path, childEntries);
+			}
+		};
+		await visit(packageDir, '/');
+		pkg.setResourceFolders(folders);
+	}
+
 	private async _hydratePackageImageSizes(
 		resources: Array<ReturnType<Package['listResources']>[number]>,
 		packageDir: string,
@@ -429,7 +515,7 @@ export class ProjectReader {
 			const filePath = fs.join(packageDir, sourcePath.replace(/^\/+/, ''));
 			if (!(await fs.exists(filePath))) continue;
 			try {
-				const size = readImageSize(await fs.readFileRaw(filePath));
+				const size = probeRasterImageDimensions(await fs.readFileRaw(filePath));
 				if (!size) continue;
 				if ((image.getWidth?.() ?? 0) === 0) image.setWidth?.(size.width);
 				if ((image.getHeight?.() ?? 0) === 0) image.setHeight?.(size.height);
@@ -457,11 +543,21 @@ export class ProjectReader {
 				const data = new Uint8Array(await fs.readFileRaw(filePath));
 				const buffer = doc.createBuffer().setURI(sourcePath).setData(data);
 				(this._asSourceDataResource(resource)).setSourceData(buffer);
-				if (resource.propertyType === 'MovieClipResource') {
-					const size = tryReadJtaSize(data);
+				if (resource.propertyType === 'ImageResource') {
+					const size = probeRasterImageDimensions(data);
 					if (size) {
-						const movieClip = resource as ReturnType<Document['createMovieClipResource']>;
-						movieClip.setWidth(size.width).setHeight(size.height);
+						const image = resource as ReturnType<Document['createImageResource']>;
+						image.setWidth(size.width).setHeight(size.height);
+					}
+				} else if (resource.propertyType === 'MovieClipResource') {
+					try {
+						applyDerivedMovieClipModel(
+							doc,
+							resource as ReturnType<Document['createMovieClipResource']>,
+							deriveMovieClipModelFromJta(data),
+						);
+					} catch {
+						// Preserve source bytes and XML-owned fields when a legacy or corrupt JTA cannot be derived.
 					}
 				}
 			} catch {
@@ -667,6 +763,8 @@ export class ProjectReader {
 				res.setFavorite(favorite);
 				const textureSetMode = readXmlAttr<string>(attrs, PROJECT_XML_PROTOCOL.packageMovieClipResource.attrs.atlas);
 				if (textureSetMode !== undefined) res.setTextureSetMode(textureSetMode);
+				const smoothing = readXmlAttr<string>(attrs, PROJECT_XML_PROTOCOL.packageMovieClipResource.attrs.smoothing);
+				res.setSmoothing(smoothing !== 'false');
 				pkg.addResource(res);
 				ctx.registerResource(pkg.getId(), id, res);
 				return res;

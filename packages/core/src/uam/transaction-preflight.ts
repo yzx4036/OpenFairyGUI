@@ -6,21 +6,36 @@ import type {
 	UamDisplayNode,
 	UamGearBinding,
 	UamGraphProperties,
+	UamGroupProperties,
 	UamListItemData,
 	UamListProperties,
 	UamLoader3DProperties,
 	UamLoaderProperties,
 	UamPackage,
+	UamPackageSettings,
 	UamProject,
 	UamTreeProperties,
 } from './model.js';
 import { UAM_SUPPORTED_TRANSACTION_SCOPE } from './model.js';
+import {
+	browserRasterValidationRequired,
+	probeRasterImage,
+	rasterImageFormatFromFileName,
+} from '../utils/image-info.js';
+import { deriveMovieClipModelFromJta } from '../utils/jta-parser.js';
+import {
+	normalizeResourceFolderPath,
+	resourceFolderName,
+	resourceFolderParentPath,
+} from '../utils/resource-folder.js';
 import { normalizeUamProject } from './normalize.js';
 import {
 	isFiniteUamPoint,
+	isValidUamComponentPropertyOverride,
 	isValidUamComponentInstanceProperties,
 	isValidUamComponentProperties,
 	isValidUamImageResourceProperties,
+	isValidUamMovieClipResourceProperties,
 	isValidUamTextProperties,
 	validateUamProject,
 } from './validate.js';
@@ -30,6 +45,7 @@ import {
 	type UamDisplayNodePropsUpdate,
 	type UamDisplayNodeSelector,
 	type UamResourceSelector,
+	type UamResourceFolderSelector,
 	type SetDisplayNodePropsOperation,
 	type UamTransactionOperation,
 	type UamTransactionSupportIssue,
@@ -40,19 +56,24 @@ import {
 	findDisplayNodeSpec,
 	findDisplayNodeSpecWithPath,
 	findPackageSpec,
+	findResourceSpec,
 	GROUPABLE_DISPLAY_NODE_KINDS,
 	findProjectedResource,
 	isDisplayListRewriteOperation,
 	isLifecycleOperation,
 	isResourceLifecycleOperation,
+	isResourceFolderLifecycleOperation,
 	isUamNativeOperation,
+	renamedResourceFileName,
 	TEXT_DISPLAY_NODE_KINDS,
 } from './transaction-shared.js';
 import {
+	applyDisplayNodePropsUpdate,
 	applyUamNativeOperations,
 	applyUamDisplayListRewriteOperation,
 	applyUamLifecycleOperation,
 	applyUamResourceLifecycleOperation,
+	applyUamResourceFolderLifecycleOperation,
 } from './transaction-uam-apply.js';
 
 function pushSupportIssue(
@@ -281,11 +302,21 @@ function validateTransitionTargets(
 const COMMON_DISPLAY_PROP_KEYS = new Set<keyof UamDisplayNodePropsUpdate>([
 	'position',
 	'size',
+	'locked',
+	'aspect',
+	'minSize',
+	'maxSize',
+	'scale',
+	'skew',
 	'visible',
 	'touchable',
 	'grayed',
 	'alpha',
 	'rotation',
+	'tooltips',
+	'blendMode',
+	'filter',
+	'filterData',
 	'customData',
 ]);
 
@@ -313,12 +344,6 @@ const LOADER_3D_PROPERTY_KEYS = new Set<keyof UamLoader3DProperties>([
 ]);
 
 const GRAPH_PROPERTY_KEYS = [
-	'locked',
-	'minWidth',
-	'maxWidth',
-	'minHeight',
-	'maxHeight',
-	'skew',
 	'graphType',
 	'lineSize',
 	'lineColor',
@@ -331,10 +356,7 @@ const GRAPH_PROPERTY_KEYS = [
 ] as const satisfies readonly (keyof UamGraphProperties)[];
 
 const LOADER_PROPERTY_KEYS = [
-	'scale',
 	'url',
-	'filter',
-	'filterData',
 	'fill',
 	'shrinkOnly',
 	'autoSize',
@@ -350,6 +372,16 @@ const LOADER_PROPERTY_KEYS = [
 	'fillAmount',
 	'clearOnPublish',
 ] as const satisfies readonly (keyof UamLoaderProperties)[];
+
+const GROUP_PROPERTY_KEYS = [
+	'layout',
+	'lineGap',
+	'columnGap',
+	'advanced',
+	'excludeInvisibles',
+	'autoSizeDisabled',
+	'mainGridIndex',
+] as const satisfies readonly (keyof UamGroupProperties)[];
 
 const LIST_PROPERTY_KEYS = [
 	'layout',
@@ -377,6 +409,7 @@ const LIST_PROPERTY_KEYS = [
 	'clipSoftness',
 	'scrollItemToViewOnClick',
 	'foldInvisibleItems',
+	'autoClearItems',
 	'listItems',
 	'pageController',
 	'controllerOverrides',
@@ -397,6 +430,318 @@ function hasExactKeys(value: object, keys: readonly string[]): boolean {
 
 function isFiniteNumber(value: unknown): value is number {
 	return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
+}
+
+function findInvalidJsonData(
+	value: unknown,
+	path: string,
+	ancestors = new Set<object>(),
+): { path: string; message: string } | null {
+	if (value === null || typeof value === 'string' || typeof value === 'boolean') return null;
+	if (typeof value === 'number') {
+		return Number.isFinite(value) ? null : { path, message: 'Project settings numbers must be finite.' };
+	}
+	if (typeof value !== 'object') return { path, message: 'Project settings must contain only JSON-safe values.' };
+	if (ancestors.has(value)) return { path, message: 'Project settings must not contain circular references.' };
+	ancestors.add(value);
+	if (Array.isArray(value)) {
+		for (let index = 0; index < value.length; index += 1) {
+			if (!(index in value)) return { path: `${path}[${index}]`, message: 'Project settings arrays must not contain holes.' };
+			const invalid = findInvalidJsonData(value[index], `${path}[${index}]`, ancestors);
+			if (invalid) return invalid;
+		}
+	} else {
+		if (!isPlainRecord(value) || Reflect.ownKeys(value).some((key) => typeof key !== 'string')) {
+			return { path, message: 'Project settings objects must be plain JSON objects.' };
+		}
+		for (const [key, child] of Object.entries(value)) {
+			const invalid = findInvalidJsonData(child, `${path}.${key}`, ancestors);
+			if (invalid) return invalid;
+		}
+	}
+	ancestors.delete(value);
+	return null;
+}
+
+function optionalFieldsMatch(
+	record: Record<string, unknown>,
+	fields: readonly string[],
+	predicate: (value: unknown) => boolean,
+): boolean {
+	return fields.every((field) => record[field] === undefined || predicate(record[field]));
+}
+
+function validateProjectSettingsPayload(
+	settings: unknown,
+	path: string,
+	issues: UamTransactionSupportIssue[],
+	operationKind: UamTransactionOperation['kind'],
+): void {
+	const invalidJson = findInvalidJsonData(settings, path);
+	if (invalidJson) {
+		pushSupportIssue(issues, 'invalid_project_settings', invalidJson.path, invalidJson.message, { operationKind });
+		return;
+	}
+	if (!isPlainRecord(settings)) {
+		pushSupportIssue(issues, 'invalid_project_settings', path, 'Project settings must be a JSON object.', { operationKind });
+		return;
+	}
+
+	const strings = (value: unknown) => typeof value === 'string';
+	const booleans = (value: unknown) => typeof value === 'boolean';
+	const stringArray = (value: unknown) => Array.isArray(value) && value.every(strings);
+	const publish = settings.publish;
+	if (publish !== undefined) {
+		const valid = isPlainRecord(publish)
+			&& optionalFieldsMatch(publish, ['fileExtension', 'path', 'branchPath'], strings)
+			&& optionalFieldsMatch(publish, ['binaryFormat', 'compressDesc', 'seperatedAtlasForBranch'], booleans)
+			&& optionalFieldsMatch(publish, ['includeHighResolution', 'branchProcessing', 'packageCount'], isFiniteNumber);
+		if (!valid) {
+			pushSupportIssue(issues, 'invalid_project_settings', `${path}.publish`, 'Publish settings contain an invalid typed field.', { operationKind });
+		} else {
+			for (const [key, numberFields, booleanFields, stringFields] of [
+				['atlasSetting', ['maxSize', 'padding'], ['paging', 'forceSquare', 'fast', 'allowRotation', 'trimImage', 'extractAlpha'], ['sizeOption']],
+				['codeGeneration', [], ['allowGenCode', 'getMemberByName', 'ignoreNoname'], ['classNamePrefix', 'codePath', 'codeType', 'memberNamePrefix', 'packageName']],
+			] as const) {
+				const nested = publish[key];
+				if (nested === undefined) continue;
+				if (!isPlainRecord(nested)
+					|| !optionalFieldsMatch(nested, numberFields, isFiniteNumber)
+					|| !optionalFieldsMatch(nested, booleanFields, booleans)
+					|| !optionalFieldsMatch(nested, stringFields, strings)
+				) {
+					pushSupportIssue(issues, 'invalid_project_settings', `${path}.publish.${key}`, `Publish ${key} contains an invalid typed field.`, { operationKind });
+				}
+			}
+		}
+	}
+
+	const common = settings.common;
+	if (common !== undefined) {
+		const valid = isPlainRecord(common)
+			&& optionalFieldsMatch(common, ['font', 'textColor', 'buttonClickSound', 'pivot', 'tipsRes'], strings)
+			&& optionalFieldsMatch(common, ['fontSize'], isFiniteNumber)
+			&& optionalFieldsMatch(common, ['colorScheme', 'fontScheme', 'fontSizeScheme'], stringArray);
+		if (!valid) {
+			pushSupportIssue(issues, 'invalid_project_settings', `${path}.common`, 'Common settings contain an invalid typed field.', { operationKind });
+		} else if (common.scrollBars !== undefined && (
+			!isPlainRecord(common.scrollBars)
+			|| !optionalFieldsMatch(common.scrollBars, ['defaultDisplay', 'horizontal', 'vertical'], strings)
+		)) {
+			pushSupportIssue(issues, 'invalid_project_settings', `${path}.common.scrollBars`, 'Common scrollBars contain an invalid typed field.', { operationKind });
+		}
+	}
+
+	const adaptation = settings.adaptation;
+	if (adaptation !== undefined && (
+		!isPlainRecord(adaptation)
+		|| !optionalFieldsMatch(adaptation, ['designResolutionX', 'designResolutionY'], isFiniteNumber)
+		|| !optionalFieldsMatch(adaptation, ['scaleMode', 'screenMathMode'], strings)
+		|| (adaptation.devices !== undefined && !Array.isArray(adaptation.devices))
+	)) {
+		pushSupportIssue(issues, 'invalid_project_settings', `${path}.adaptation`, 'Adaptation settings contain an invalid typed field.', { operationKind });
+	}
+
+	if (settings.customProperties !== undefined && !isPlainRecord(settings.customProperties)) {
+		pushSupportIssue(issues, 'invalid_project_settings', `${path}.customProperties`, 'Custom properties settings must be a JSON object.', { operationKind });
+	}
+	const i18n = settings.i18n;
+	if (i18n !== undefined && (
+		!isPlainRecord(i18n)
+		|| !Array.isArray(i18n.langFiles)
+		|| !i18n.langFiles.every((entry) => (
+			isPlainRecord(entry) && typeof entry.name === 'string' && typeof entry.path === 'string'
+		))
+	)) {
+		pushSupportIssue(issues, 'invalid_project_settings', `${path}.i18n`, 'I18n settings require langFiles entries with string name and path.', { operationKind });
+	}
+}
+
+const PACKAGE_SETTINGS_KEYS = ['compressPNG', 'jpegQuality', 'publish'] as const;
+const PACKAGE_PUBLISH_KEYS = [
+	'name',
+	'path',
+	'branchPath',
+	'packageCount',
+	'genCode',
+	'codePath',
+	'useGlobalAtlasSettings',
+	'maxAtlasSize',
+	'sizeOption',
+	'forceSquare',
+	'allowRotation',
+	'paging',
+	'extractAlpha',
+	'maxAtlasIndex',
+	'atlases',
+	'excludedResourceIds',
+] as const;
+const PACKAGE_PUBLISH_ATLAS_KEYS = ['index', 'name', 'compression'] as const;
+
+function pushInvalidPackageSettings(
+	issues: UamTransactionSupportIssue[],
+	path: string,
+	message: string,
+	operationKind: UamTransactionOperation['kind'],
+): void {
+	pushSupportIssue(issues, 'invalid_package_settings', path, message, { operationKind });
+}
+
+function isSafePackageOutputPath(value: string): boolean {
+	if (!value) return true;
+	if (/^[\\/]/.test(value) || /^[a-z]:/i.test(value)) return false;
+	return value.replace(/\\/g, '/').split('/').every(isSafeBranchName);
+}
+
+function validatePackageSettingsPayload(
+	settings: unknown,
+	path: string,
+	issues: UamTransactionSupportIssue[],
+	operationKind: UamTransactionOperation['kind'],
+): settings is UamPackageSettings {
+	const issueCount = issues.length;
+	const invalidJson = findInvalidJsonData(settings, path);
+	if (invalidJson) {
+		pushInvalidPackageSettings(
+			issues,
+			invalidJson.path,
+			invalidJson.message.replaceAll('Project settings', 'Package settings'),
+			operationKind,
+		);
+		return false;
+	}
+	if (!isPlainRecord(settings) || !hasExactKeys(settings, PACKAGE_SETTINGS_KEYS)) {
+		pushInvalidPackageSettings(issues, path, 'Package settings must be one complete typed snapshot.', operationKind);
+		return false;
+	}
+	if (settings.compressPNG !== null && typeof settings.compressPNG !== 'boolean') {
+		pushInvalidPackageSettings(issues, `${path}.compressPNG`, 'compressPNG must be boolean or null.', operationKind);
+	}
+	if (settings.jpegQuality !== null && !isIntegerBetween(settings.jpegQuality, 1, 100)) {
+		pushInvalidPackageSettings(issues, `${path}.jpegQuality`, 'jpegQuality must be null or an integer from 1 to 100.', operationKind);
+	}
+	if (settings.publish === null) {
+		pushInvalidPackageSettings(issues, `${path}.publish`, 'publish must be one complete typed snapshot.', operationKind);
+		return false;
+	}
+	const publish = settings.publish;
+	if (!isPlainRecord(publish) || !hasExactKeys(publish, PACKAGE_PUBLISH_KEYS)) {
+		pushInvalidPackageSettings(issues, `${path}.publish`, 'publish must be one complete typed snapshot.', operationKind);
+		return false;
+	}
+	for (const key of ['name', 'path', 'branchPath', 'codePath'] as const) {
+		if (typeof publish[key] !== 'string') {
+			pushInvalidPackageSettings(issues, `${path}.publish.${key}`, `${key} must be a string.`, operationKind);
+		}
+	}
+	if (typeof publish.name === 'string' && publish.name && !isSafeBranchName(publish.name)) {
+		pushInvalidPackageSettings(issues, `${path}.publish.name`, 'Publish name must be empty or a safe output path segment.', operationKind);
+	}
+	for (const key of ['path', 'branchPath', 'codePath'] as const) {
+		if (typeof publish[key] === 'string' && !isSafePackageOutputPath(publish[key])) {
+			pushInvalidPackageSettings(issues, `${path}.publish.${key}`, `${key} must be an empty or safe relative path.`, operationKind);
+		}
+	}
+	if (!isIntegerBetween(publish.packageCount, 0, 2_147_483_647)) {
+		pushInvalidPackageSettings(issues, `${path}.publish.packageCount`, 'packageCount must be a non-negative integer.', operationKind);
+	}
+	for (const key of ['genCode', 'useGlobalAtlasSettings', 'forceSquare', 'allowRotation', 'paging', 'extractAlpha'] as const) {
+		if (typeof publish[key] !== 'boolean') {
+			pushInvalidPackageSettings(issues, `${path}.publish.${key}`, `${key} must be boolean.`, operationKind);
+		}
+	}
+	if (!isIntegerBetween(publish.maxAtlasSize, 1, 16_384)) {
+		pushInvalidPackageSettings(issues, `${path}.publish.maxAtlasSize`, 'maxAtlasSize must be an integer from 1 to 16384.', operationKind);
+	}
+	if (publish.sizeOption !== 'pot' && publish.sizeOption !== 'npot' && publish.sizeOption !== 'mof') {
+		pushInvalidPackageSettings(issues, `${path}.publish.sizeOption`, 'sizeOption must be pot, npot, or mof.', operationKind);
+	}
+	if (!isIntegerBetween(publish.maxAtlasIndex, 0, 255)) {
+		pushInvalidPackageSettings(issues, `${path}.publish.maxAtlasIndex`, 'maxAtlasIndex must be an integer from 0 to 255.', operationKind);
+	}
+	if (!Array.isArray(publish.atlases)) {
+		pushInvalidPackageSettings(issues, `${path}.publish.atlases`, 'atlases must be an array.', operationKind);
+	} else {
+		const indices = new Set<number>();
+		for (const [atlasIndex, atlas] of publish.atlases.entries()) {
+			const atlasPath = `${path}.publish.atlases[${atlasIndex}]`;
+			if (!isPlainRecord(atlas) || !hasExactKeys(atlas, PACKAGE_PUBLISH_ATLAS_KEYS)) {
+				pushInvalidPackageSettings(issues, atlasPath, 'Atlas entries must be complete typed snapshots.', operationKind);
+				continue;
+			}
+			if (!Number.isInteger(atlas.index) || atlas.index < 0 || atlas.index > publish.maxAtlasIndex) {
+				pushInvalidPackageSettings(issues, `${atlasPath}.index`, 'Atlas index must be a non-negative integer no greater than maxAtlasIndex.', operationKind);
+			} else if (indices.has(atlas.index)) {
+				pushInvalidPackageSettings(issues, `${atlasPath}.index`, `Atlas index ${atlas.index} is duplicated.`, operationKind);
+			}
+			indices.add(atlas.index);
+			if (typeof atlas.name !== 'string' || (atlas.name && !isSafeBranchName(atlas.name))) {
+				pushInvalidPackageSettings(issues, `${atlasPath}.name`, 'Atlas name must be empty or a safe output path segment.', operationKind);
+			}
+			if (typeof atlas.compression !== 'boolean') {
+				pushInvalidPackageSettings(issues, `${atlasPath}.compression`, 'Atlas compression must be boolean.', operationKind);
+			} else if (!atlas.name && !atlas.compression) {
+				pushInvalidPackageSettings(issues, atlasPath, 'An atlas entry must define a name or enable compression.', operationKind);
+			}
+		}
+	}
+	if (!Array.isArray(publish.excludedResourceIds)) {
+		pushInvalidPackageSettings(issues, `${path}.publish.excludedResourceIds`, 'excludedResourceIds must be an array.', operationKind);
+	} else {
+		const ids = new Set<string>();
+		for (const [resourceIndex, resourceId] of publish.excludedResourceIds.entries()) {
+			const resourcePath = `${path}.publish.excludedResourceIds[${resourceIndex}]`;
+			if (typeof resourceId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(resourceId)) {
+				pushInvalidPackageSettings(issues, resourcePath, 'Excluded resource ids must be non-empty CSV-safe ids.', operationKind);
+			} else if (ids.has(resourceId)) {
+				pushInvalidPackageSettings(issues, resourcePath, `Excluded resource id "${resourceId}" is duplicated.`, operationKind);
+			}
+			ids.add(resourceId);
+		}
+	}
+	return issues.length === issueCount;
+}
+
+function canonicalPackageSettings(settings: UamPackageSettings): UamPackageSettings {
+	return structuredClone({
+		...settings,
+		publish: settings.publish ? {
+			...settings.publish,
+			atlases: [...settings.publish.atlases].sort((left, right) => left.index - right.index),
+			excludedResourceIds: [...settings.publish.excludedResourceIds],
+		} : null,
+	});
+}
+
+function packageSettingsSnapshot(pkg: UamPackage): UamPackageSettings {
+	return canonicalPackageSettings({
+		compressPNG: pkg.compressPNG,
+		jpegQuality: pkg.jpegQuality,
+		publish: pkg.publish,
+	});
+}
+
+function canonicalProjectSettings(settings: Record<string, unknown>): Record<string, unknown> {
+	return structuredClone({
+		...settings,
+		publish: settings.publish ?? {},
+		common: settings.common ?? {},
+		adaptation: settings.adaptation ?? {},
+	});
+}
+
+function stableJson(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+	if (isPlainRecord(value)) {
+		return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+	}
+	return JSON.stringify(value) ?? 'null';
 }
 
 function isIntegerBetween(value: unknown, minimum: number, maximum: number): value is number {
@@ -421,6 +766,12 @@ function isFiniteEdgeInsets(value: unknown): boolean {
 	return [insets.top, insets.bottom, insets.left, insets.right].every(isFiniteNumber);
 }
 
+function isFiniteSize(value: unknown): value is { width: number; height: number } {
+	if (!value || typeof value !== 'object') return false;
+	const size = value as { width?: unknown; height?: unknown };
+	return isFiniteNumber(size.width) && isFiniteNumber(size.height);
+}
+
 function isNullableString(value: unknown): value is string | null {
 	return value === null || typeof value === 'string';
 }
@@ -429,7 +780,7 @@ function isValidListItem(value: unknown): value is UamListItemData {
 	if (!value || typeof value !== 'object') return false;
 	const item = value as UamListItemData;
 	const keys = Object.keys(item);
-	if (keys.length < 8 || keys.length > 9 || keys.some((key) => ![
+	if (keys.length < 8 || keys.length > 10 || keys.some((key) => ![
 		'title',
 		'icon',
 		'url',
@@ -439,6 +790,7 @@ function isValidListItem(value: unknown): value is UamListItemData {
 		'level',
 		'isFolder',
 		'controllers',
+		'propertyOverrides',
 	].includes(key))) return false;
 	return [
 		item.title,
@@ -451,22 +803,16 @@ function isValidListItem(value: unknown): value is UamListItemData {
 		&& Number.isInteger(item.level)
 		&& item.level >= 0
 		&& (item.isFolder === null || typeof item.isFolder === 'boolean')
-		&& (item.controllers === undefined || isNullableString(item.controllers));
+		&& (item.controllers === undefined || isNullableString(item.controllers))
+		&& (item.propertyOverrides === undefined
+			|| (Array.isArray(item.propertyOverrides)
+				&& item.propertyOverrides.every(isValidUamComponentPropertyOverride)));
 }
 
 function isValidGraphProperties(value: unknown): value is UamGraphProperties {
 	if (!value || typeof value !== 'object' || !hasExactKeys(value, GRAPH_PROPERTY_KEYS)) return false;
 	const properties = value as UamGraphProperties;
-	return typeof properties.locked === 'boolean'
-		&& [
-			properties.minWidth,
-			properties.maxWidth,
-			properties.minHeight,
-			properties.maxHeight,
-			properties.lineSize,
-			properties.startAngle,
-		].every(isFiniteNumber)
-		&& isFiniteUamPoint(properties.skew)
+	return [properties.lineSize, properties.startAngle].every(isFiniteNumber)
 		&& isIntegerBetween(properties.graphType, 0, 4)
 		&& isColor(properties.lineColor)
 		&& isColor(properties.fillColor)
@@ -481,8 +827,7 @@ function isValidGraphProperties(value: unknown): value is UamGraphProperties {
 function isValidLoaderProperties(value: unknown): value is UamLoaderProperties {
 	if (!value || typeof value !== 'object' || !hasExactKeys(value, LOADER_PROPERTY_KEYS)) return false;
 	const properties = value as UamLoaderProperties;
-	return isFiniteUamPoint(properties.scale)
-		&& [properties.url, properties.filter, properties.filterData].every((item) => typeof item === 'string')
+	return typeof properties.url === 'string'
 		&& isIntegerBetween(properties.fill, 0, 5)
 		&& [properties.shrinkOnly, properties.autoSize, properties.useResize, properties.playing,
 			properties.fillClockwise, properties.clearOnPublish].every((item) => typeof item === 'boolean')
@@ -499,6 +844,34 @@ function isValidLoaderProperties(value: unknown): value is UamLoaderProperties {
 			&& properties.fillClockwise
 			&& properties.fillAmount === 100
 		));
+}
+
+function isValidGroupProperties(value: unknown): value is UamGroupProperties {
+	if (!value || typeof value !== 'object' || !hasExactKeys(value, GROUP_PROPERTY_KEYS)) return false;
+	const properties = value as UamGroupProperties;
+	if (!isIntegerBetween(properties.layout, 0, 2)
+		|| ![properties.lineGap, properties.columnGap].every(isFiniteNumber)
+		|| ![properties.advanced, properties.excludeInvisibles, properties.autoSizeDisabled]
+			.every((item) => typeof item === 'boolean')
+		|| !Number.isInteger(properties.mainGridIndex)
+		|| properties.mainGridIndex < -1
+	) return false;
+	if (!properties.advanced) {
+		return properties.layout === 0
+			&& properties.lineGap === 0
+			&& properties.columnGap === 0
+			&& !properties.excludeInvisibles
+			&& !properties.autoSizeDisabled
+			&& properties.mainGridIndex === -1;
+	}
+	if (properties.layout === 0) {
+		return properties.lineGap === 0
+			&& properties.columnGap === 0
+			&& !properties.excludeInvisibles
+			&& !properties.autoSizeDisabled
+			&& properties.mainGridIndex === -1;
+	}
+	return true;
 }
 
 function isValidListProperties(
@@ -535,7 +908,7 @@ function isValidListProperties(
 		&& [properties.lineCount, properties.columnCount].every((item) => Number.isInteger(item) && item >= 0)
 		&& validCounts
 		&& isIntegerBetween(properties.selectionMode, 0, 3)
-		&& [properties.autoResizeItem, properties.scrollItemToViewOnClick, properties.foldInvisibleItems]
+		&& [properties.autoResizeItem, properties.scrollItemToViewOnClick, properties.foldInvisibleItems, properties.autoClearItems]
 			.every((item) => typeof item === 'boolean')
 		&& isIntegerBetween(properties.childrenRenderOrder, 0, 2)
 		&& Number.isInteger(properties.apexIndex)
@@ -591,6 +964,72 @@ function validateDisplayPropsPayload(
 			'textProperties cannot be combined with individual text property overrides.',
 			{ operationKind: op.kind, nodeKind },
 		);
+	}
+	const commonValueIssue = (field: keyof UamDisplayNodePropsUpdate, message: string) => pushSupportIssue(
+		issues,
+		'invalid_display_node_payload',
+		`${path}.props.${String(field)}`,
+		message,
+		{ operationKind: op.kind, nodeKind, field: String(field) },
+	);
+	if (op.props.position !== undefined && !isFiniteUamPoint(op.props.position)) {
+		commonValueIssue('position', 'Display node position must contain finite x and y numbers.');
+	}
+	if (op.props.size !== undefined && (!isFiniteSize(op.props.size) || op.props.size.width < 0 || op.props.size.height < 0)) {
+		commonValueIssue('size', 'Display node size must contain finite non-negative width and height values.');
+	}
+	for (const field of ['locked', 'aspect', 'visible', 'touchable', 'grayed'] as const) {
+		if (op.props[field] !== undefined && typeof op.props[field] !== 'boolean') {
+			commonValueIssue(field, `Display node ${field} must be boolean.`);
+		}
+	}
+	for (const field of ['scale', 'skew'] as const) {
+		if (op.props[field] !== undefined && !isFiniteUamPoint(op.props[field])) {
+			commonValueIssue(field, `Display node ${field} must contain finite x and y numbers.`);
+		}
+	}
+	const minSize = op.props.minSize ?? node?.minSize;
+	const maxSize = op.props.maxSize ?? node?.maxSize;
+	for (const [field, value] of [['minSize', op.props.minSize], ['maxSize', op.props.maxSize]] as const) {
+		if (value !== undefined && (!isFiniteSize(value) || value.width < 0 || value.height < 0)) {
+			commonValueIssue(field, `Display node ${field} must contain finite non-negative width and height values.`);
+		}
+	}
+	if (isFiniteSize(minSize) && isFiniteSize(maxSize)) {
+		if (maxSize.width > 0 && maxSize.width < minSize.width) {
+			commonValueIssue('maxSize', 'Display node maxSize.width must be zero or at least minSize.width.');
+		}
+		if (maxSize.height > 0 && maxSize.height < minSize.height) {
+			commonValueIssue('maxSize', 'Display node maxSize.height must be zero or at least minSize.height.');
+		}
+	}
+	if (op.props.alpha !== undefined && (!isFiniteNumber(op.props.alpha) || op.props.alpha < 0 || op.props.alpha > 1)) {
+		commonValueIssue('alpha', 'Display node alpha must be a finite number between 0 and 1.');
+	}
+	if (op.props.rotation !== undefined && !isFiniteNumber(op.props.rotation)) {
+		commonValueIssue('rotation', 'Display node rotation must be finite.');
+	}
+	for (const field of ['tooltips', 'filter', 'filterData', 'customData'] as const) {
+		if (op.props[field] !== undefined && typeof op.props[field] !== 'string') {
+			commonValueIssue(field, `Display node ${field} must be a string.`);
+		}
+	}
+	if (op.props.blendMode !== undefined
+		&& !['normal', 'none', 'add', 'multiply', 'screen', 'erase'].includes(op.props.blendMode)
+	) {
+		commonValueIssue('blendMode', `Unsupported display node blendMode "${op.props.blendMode}".`);
+	}
+	const filter = op.props.filter ?? node?.filter ?? '';
+	const filterData = op.props.filterData ?? node?.filterData ?? '';
+	if (filter !== '' && filter !== 'color') {
+		commonValueIssue('filter', `Unsupported display node filter "${filter}".`);
+	} else if (filter === 'color') {
+		const values = filterData.split(',').map((part) => Number(part.trim()));
+		if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) {
+			commonValueIssue('filterData', 'Color filterData must contain four finite comma-separated numbers.');
+		}
+	} else if (filterData !== '') {
+		commonValueIssue('filterData', 'filterData must be empty when filter is empty.');
 	}
 	for (const key of Object.keys(op.props) as Array<keyof UamDisplayNodePropsUpdate>) {
 		if (key === 'pivot') {
@@ -652,6 +1091,26 @@ function validateDisplayPropsPayload(
 					'invalid_display_node_payload',
 					`${path}.props.graphProperties`,
 					'Graph properties must be a complete valid graph property snapshot.',
+					{ operationKind: op.kind, nodeKind, field: key },
+				);
+			}
+			continue;
+		}
+		if (key === 'groupProperties') {
+			if (nodeKind && nodeKind !== 'group') {
+				pushSupportIssue(
+					issues,
+					'unsupported_display_node_field',
+					`${path}.props.groupProperties`,
+					'Group properties are only supported on group display nodes.',
+					{ operationKind: op.kind, nodeKind, field: key },
+				);
+			} else if (!isValidGroupProperties(op.props.groupProperties)) {
+				pushSupportIssue(
+					issues,
+					'invalid_display_node_payload',
+					`${path}.props.groupProperties`,
+					'Group properties must be a complete valid group property snapshot.',
 					{ operationKind: op.kind, nodeKind, field: key },
 				);
 			}
@@ -1191,10 +1650,86 @@ function isSafePackageName(value: string): boolean {
 		&& value !== '..';
 }
 
+function isSafeBranchName(value: string): boolean {
+	return isSafePackageName(value)
+		&& value.trim() === value
+		&& !/[. ]$/.test(value)
+		&& !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(value);
+}
+
 function isSafeResourcePath(value: string): boolean {
 	if (!value) return false;
 	const segments = value.replace(/\\/g, '/').split('/').filter(Boolean);
 	return !segments.some((segment) => segment === '.' || segment === '..');
+}
+
+function isSafeResourceFolderPath(value: string, allowRoot = false): boolean {
+	if (!value || value !== normalizeResourceFolderPath(value)) return false;
+	if (value === '/') return allowRoot;
+	return value.split('/').filter(Boolean).every(isSafePackageName);
+}
+
+function folderBranch(selector: UamResourceFolderSelector): string {
+	return selector.branch ?? '';
+}
+
+function findResourceFolder(project: UamProject, selector: UamResourceFolderSelector) {
+	const pkg = findPackageSpec(project, selector.packageId);
+	const branch = folderBranch(selector);
+	const folder = pkg?.folders.find((candidate) => candidate.branch === branch && candidate.path === selector.path);
+	return pkg && folder ? { pkg, folder } : null;
+}
+
+function folderContainsItems(pkg: UamPackage, branch: string, path: string): boolean {
+	return pkg.folders.some((folder) => (
+		folder.branch === branch && folder.path !== path && folder.path.startsWith(path)
+	)) || pkg.resources.some((resource) => (
+		resource.branch === branch && normalizeResourceFolderPath(resource.path).startsWith(path)
+	));
+}
+
+function folderPathConflictsWithResource(pkg: UamPackage, branch: string, path: string): boolean {
+	const folderTarget = path.replace(/^\/+|\/+$/g, '');
+	return pkg.resources.some((resource) => {
+		if (resource.branch !== branch) return false;
+		const fileName = resource.kind === 'component' ? `${resource.name}.xml` : primaryResourceFileName(resource);
+		return normalizeResourceFolderPath(`${resource.path}/${fileName}`).slice(1, -1) === folderTarget;
+	});
+}
+
+function folderParentExists(pkg: UamPackage, branch: string, path: string): boolean {
+	const parentPath = resourceFolderParentPath(path);
+	return parentPath === '/' || pkg.folders.some((folder) => folder.branch === branch && folder.path === parentPath);
+}
+
+function validateResourceFolderSelector(
+	project: UamProject,
+	selector: UamResourceFolderSelector,
+	path: string,
+	issues: UamTransactionSupportIssue[],
+	operationKind: UamTransactionOperation['kind'],
+) {
+	if (!isSafeResourceFolderPath(selector.path)) {
+		pushSupportIssue(
+			issues,
+			'invalid_resource_folder_selector',
+			`${path}.path`,
+			'Resource folder selector path must be canonical, non-root, and traversal-free.',
+			{ operationKind },
+		);
+		return null;
+	}
+	const found = findResourceFolder(project, selector);
+	if (!found) {
+		pushSupportIssue(
+			issues,
+			'invalid_resource_folder_selector',
+			path,
+			`Resource folder "${folderBranch(selector)}:${selector.path}" was not found in package "${selector.packageId}".`,
+			{ operationKind },
+		);
+	}
+	return found;
 }
 
 function primaryResourceFileName(resource: UamAssetResource): string {
@@ -1310,6 +1845,27 @@ function validateAssetResourcePayload(
 			'Added binary resource must provide primary source bytes.',
 			{ operationKind, resourceKind: resource.kind },
 		);
+	} else if (resource.kind === 'movieClip') {
+		try {
+			deriveMovieClipModelFromJta(resource.sourceBytes);
+		} catch (error) {
+			pushSupportIssue(
+				issues,
+				'invalid_movie_clip_jta',
+				`${path}.resource.sourceBytes`,
+				error instanceof Error ? error.message : 'MovieClip source bytes are not a valid JTA file.',
+				{ operationKind, resourceKind: resource.kind },
+			);
+		}
+	}
+	if (resource.kind === 'movieClip' && !isValidUamMovieClipResourceProperties(resource.movieClip)) {
+		pushSupportIssue(
+			issues,
+			'invalid_resource_payload',
+			`${path}.resource.movieClip`,
+			'Added MovieClip resource must define a complete valid typed MovieClip snapshot.',
+			{ operationKind, resourceKind: resource.kind },
+		);
 	}
 	if (resource.sourcePath !== undefined) {
 		pushSupportIssue(
@@ -1335,6 +1891,11 @@ function validatePackagePayload(
 	if (!isSafePackageName(pkg.name)) {
 		pushSupportIssue(issues, 'invalid_package_payload', `${path}.name`, 'Package name must be a safe output path segment.', { operationKind });
 	}
+	validatePackageSettingsPayload({
+		compressPNG: pkg.compressPNG,
+		jpegQuality: pkg.jpegQuality,
+		publish: pkg.publish,
+	}, path, issues, operationKind);
 
 	const standalone = normalizeUamProject({ ...project, packages: [pkg] });
 	for (const issue of validateUamProject(standalone)) {
@@ -1352,6 +1913,19 @@ function validatePackagePayload(
 				'Added package assets must provide primary source bytes.',
 				{ operationKind, resourceKind: resource.kind },
 			);
+		}
+		if (resource.kind === 'movieClip' && resource.sourceBytes instanceof Uint8Array) {
+			try {
+				deriveMovieClipModelFromJta(resource.sourceBytes);
+			} catch (error) {
+				pushSupportIssue(
+					issues,
+					'invalid_movie_clip_jta',
+					`${resourcePath}.sourceBytes`,
+					`MovieClip source bytes must contain a valid JTA payload: ${error instanceof Error ? error.message : String(error)}`,
+					{ operationKind, resourceKind: resource.kind },
+				);
+			}
 		}
 		if (resource.kind !== 'component') continue;
 		for (const [nodeIndex, node] of resource.component.displayList.entries()) {
@@ -1393,7 +1967,7 @@ function validateLifecycleInsertionIndex(
 	index: number,
 	maximum: number,
 	path: string,
-	code: 'invalid_package_index' | 'invalid_component_index',
+	code: 'invalid_package_index' | 'invalid_component_index' | 'invalid_resource_index',
 	issues: UamTransactionSupportIssue[],
 	operationKind: UamTransactionOperation['kind'],
 ): void {
@@ -1512,9 +2086,14 @@ function findExternalComponentReference(project: UamProject, packageId: string, 
 	return null;
 }
 
-function findComponentPackageDependency(component: UamComponentResource, packageId: string, path: string): string | null {
+function findComponentPackageDependency(
+	component: UamComponentResource,
+	ownerPackageId: string,
+	dependencyPackageId: string,
+	path: string,
+): string | null {
 	for (const [nodeIndex, node] of component.component.displayList.entries()) {
-		if (nodeReferencesPackage(node, packageId, packageId)) {
+		if (nodeReferencesPackage(node, ownerPackageId, dependencyPackageId)) {
 			return `${path}.component.displayList[${nodeIndex}]`;
 		}
 	}
@@ -1588,7 +2167,12 @@ function validateLifecycleReferenceChecks(
 				if (referencePath) {
 					pushSupportIssue(issues, 'component_referenced', check.path, `Component "${check.component.id}" is still referenced by ${referencePath}.`, { operationKind: check.operationKind });
 				}
-				const dependencyPath = findComponentPackageDependency(check.component, check.sourcePackageId, check.path);
+				const dependencyPath = findComponentPackageDependency(
+					check.component,
+					finalPackage.id,
+					check.sourcePackageId,
+					check.path,
+				);
 				if (dependencyPath) {
 					pushSupportIssue(issues, 'component_has_package_dependencies', dependencyPath, `Component "${check.component.id}" still resolves display resources from package "${check.sourcePackageId}".`, { operationKind: check.operationKind });
 				}
@@ -1629,11 +2213,55 @@ function validateLifecycleOperationPayloads(
 		if (
 			!isLifecycleOperation(operation)
 			&& !isResourceLifecycleOperation(operation)
+			&& !isResourceFolderLifecycleOperation(operation)
 			&& !isDisplayListRewriteOperation(operation)
+			&& operation.kind !== 'setDisplayNodeProps'
+			&& operation.kind !== 'setResourceFolderFavorite'
 		) continue;
 		const operationPath = `operations[${operationIndex}]`;
 		const issueCount = issues.length;
 		switch (operation.kind) {
+			case 'addBranch':
+				if (!isSafeBranchName(operation.branch)) {
+					pushSupportIssue(issues, 'invalid_branch_name', `${operationPath}.branch`, 'Branch must be a safe non-reserved output path segment.', { operationKind: operation.kind });
+				}
+				if (projected.branches.includes(operation.branch)) {
+					pushSupportIssue(issues, 'duplicate_branch_name', `${operationPath}.branch`, `Branch "${operation.branch}" already exists.`, { operationKind: operation.kind });
+				}
+				break;
+			case 'renameBranch': {
+				const branchName = operation.selector.branch;
+				if (!projected.branches.includes(branchName)) {
+					pushSupportIssue(issues, 'invalid_branch_selector', `${operationPath}.selector.branch`, `Branch "${branchName}" was not found.`, { operationKind: operation.kind });
+				}
+				if (!isSafeBranchName(operation.newName)) {
+					pushSupportIssue(issues, 'invalid_branch_name', `${operationPath}.newName`, 'Branch must be a safe non-reserved output path segment.', { operationKind: operation.kind });
+				}
+				if (projected.branches.includes(operation.newName)) {
+					pushSupportIssue(issues, 'duplicate_branch_name', `${operationPath}.newName`, `Branch "${operation.newName}" already exists.`, { operationKind: operation.kind });
+				}
+				break;
+			}
+			case 'removeBranch': {
+				const branchName = operation.selector.branch;
+				if (!projected.branches.includes(branchName)) {
+					pushSupportIssue(issues, 'invalid_branch_selector', `${operationPath}.selector.branch`, `Branch "${branchName}" was not found.`, { operationKind: operation.kind });
+					break;
+				}
+				if (projected.packages.some((pkg) => (
+					pkg.folders.some((folder) => folder.branch === branchName)
+					|| pkg.resources.some((resource) => resource.branch === branchName)
+				))) {
+					pushSupportIssue(issues, 'branch_not_empty', `${operationPath}.selector.branch`, `Branch "${branchName}" still contains resources or folders.`, { operationKind: operation.kind });
+				}
+				if (projected.packages.some((pkg) => {
+					const slotIndex = pkg.branchNames.indexOf(branchName);
+					return slotIndex >= 0 && pkg.resources.some((resource) => !!resource.branchItemIds[slotIndex]);
+				})) {
+					pushSupportIssue(issues, 'branch_referenced', `${operationPath}.selector.branch`, `Branch "${branchName}" still has mapped variant ids.`, { operationKind: operation.kind });
+				}
+				break;
+			}
 			case 'addPackage': {
 				validatePackagePayload(projected, operation.package, `${operationPath}.package`, issues, operation.kind);
 				if (findPackageSpec(projected, operation.package.id)) {
@@ -1704,6 +2332,14 @@ function validateLifecycleOperationPayloads(
 						issues,
 						operation.kind,
 					);
+					validateLifecycleInsertionIndex(
+						operation.atIndex === undefined ? pkg.resources.length : operation.atIndex,
+						pkg.resources.length,
+						`${operationPath}.atIndex`,
+						'invalid_resource_index',
+						issues,
+						operation.kind,
+					);
 				}
 				break;
 			}
@@ -1717,6 +2353,88 @@ function validateLifecycleOperationPayloads(
 						`Binary resource "${operation.selector.resourceId}" was not found in package "${operation.selector.packageId}".`,
 						{ operationKind: operation.kind },
 					);
+				}
+				break;
+			}
+			case 'addResourceFolder': {
+				const pkg = validateLifecyclePackageSelector(projected, operation.selector, `${operationPath}.selector`, issues, operation.kind);
+				const branch = operation.branch ?? '';
+				if (!isSafeResourceFolderPath(operation.path)) {
+					pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.path`, 'Resource folder path must be canonical, non-root, and traversal-free.', { operationKind: operation.kind });
+				}
+				if (branch && (!isSafePackageName(branch) || !projected.branches.includes(branch))) {
+					pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.branch`, `Resource folder branch "${branch}" is not defined by the project.`, { operationKind: operation.kind });
+				}
+				if (operation.favorite !== undefined && typeof operation.favorite !== 'boolean') {
+					pushSupportIssue(issues, 'invalid_resource_payload', `${operationPath}.favorite`, 'addResourceFolder.favorite must be boolean.', { operationKind: operation.kind });
+				}
+				if (operation.atlas !== undefined && typeof operation.atlas !== 'string') {
+					pushSupportIssue(issues, 'invalid_resource_payload', `${operationPath}.atlas`, 'addResourceFolder.atlas must be a string.', { operationKind: operation.kind });
+				}
+				if (pkg && isSafeResourceFolderPath(operation.path)) {
+					if (!folderParentExists(pkg, branch, operation.path)) {
+						pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.path`, `Parent folder "${resourceFolderParentPath(operation.path)}" does not exist.`, { operationKind: operation.kind });
+					}
+					if (pkg.folders.some((folder) => folder.branch === branch && folder.path === operation.path)
+						|| folderPathConflictsWithResource(pkg, branch, operation.path)
+					) {
+						pushSupportIssue(issues, 'resource_folder_conflict', `${operationPath}.path`, `Resource folder path "${operation.path}" already exists or conflicts with a resource.`, { operationKind: operation.kind });
+					}
+				}
+				break;
+			}
+			case 'renameResourceFolder': {
+				const found = validateResourceFolderSelector(projected, operation.selector, `${operationPath}.selector`, issues, operation.kind);
+				if (!isSafePackageName(operation.newName)) {
+					pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.newName`, 'renameResourceFolder.newName must be a safe folder name.', { operationKind: operation.kind });
+				}
+				if (found) {
+					const branch = folderBranch(operation.selector);
+					if (folderContainsItems(found.pkg, branch, found.folder.path)) {
+						pushSupportIssue(issues, 'resource_folder_not_empty', `${operationPath}.selector`, 'renameResourceFolder only supports empty folders.', { operationKind: operation.kind });
+					}
+					if (isSafePackageName(operation.newName)) {
+						const destination = normalizeResourceFolderPath(`${resourceFolderParentPath(found.folder.path)}/${operation.newName}`);
+						if (destination === found.folder.path
+							|| found.pkg.folders.some((folder) => folder.branch === branch && folder.path === destination)
+							|| folderPathConflictsWithResource(found.pkg, branch, destination)
+						) {
+							pushSupportIssue(issues, 'resource_folder_conflict', `${operationPath}.newName`, `Resource folder path "${destination}" already exists or conflicts with a resource.`, { operationKind: operation.kind });
+						}
+					}
+				}
+				break;
+			}
+			case 'moveResourceFolder': {
+				const found = validateResourceFolderSelector(projected, operation.selector, `${operationPath}.selector`, issues, operation.kind);
+				const branch = folderBranch(operation.selector);
+				if (!isSafeResourceFolderPath(operation.toPath, true)) {
+					pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.toPath`, 'moveResourceFolder.toPath must be a canonical folder path or root.', { operationKind: operation.kind });
+				}
+				if (found && isSafeResourceFolderPath(operation.toPath, true)) {
+					if (operation.toPath !== '/' && !found.pkg.folders.some((folder) => folder.branch === branch && folder.path === operation.toPath)) {
+						pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.toPath`, `Destination parent folder "${operation.toPath}" does not exist.`, { operationKind: operation.kind });
+					}
+					if (operation.toPath.startsWith(found.folder.path)) {
+						pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.toPath`, 'A resource folder cannot be moved into itself.', { operationKind: operation.kind });
+					}
+					if (folderContainsItems(found.pkg, branch, found.folder.path)) {
+						pushSupportIssue(issues, 'resource_folder_not_empty', `${operationPath}.selector`, 'moveResourceFolder only supports empty folders.', { operationKind: operation.kind });
+					}
+					const destination = normalizeResourceFolderPath(`${operation.toPath}/${resourceFolderName(found.folder.path)}`);
+					if (destination === found.folder.path
+						|| found.pkg.folders.some((folder) => folder.branch === branch && folder.path === destination)
+						|| folderPathConflictsWithResource(found.pkg, branch, destination)
+					) {
+						pushSupportIssue(issues, 'resource_folder_conflict', `${operationPath}.toPath`, `Resource folder path "${destination}" already exists or conflicts with a resource.`, { operationKind: operation.kind });
+					}
+				}
+				break;
+			}
+			case 'removeResourceFolder': {
+				const found = validateResourceFolderSelector(projected, operation.selector, `${operationPath}.selector`, issues, operation.kind);
+				if (found && folderContainsItems(found.pkg, folderBranch(operation.selector), found.folder.path)) {
+					pushSupportIssue(issues, 'resource_folder_not_empty', `${operationPath}.selector`, 'removeResourceFolder only supports empty folders.', { operationKind: operation.kind });
 				}
 				break;
 			}
@@ -1746,12 +2464,25 @@ function validateLifecycleOperationPayloads(
 			case 'detachDisplayNode':
 				validateTouchedDisplayNodeKind(projected, operation.selector, `${operationPath}.selector.displayNodeId`, issues, operation.kind);
 				break;
+			case 'setDisplayNodeProps':
+				validateTouchedDisplayNodeKind(projected, operation.selector, `${operationPath}.selector.displayNodeId`, issues, operation.kind);
+				validateDisplayPropsPayload(operation, projected, operationPath, issues);
+				break;
+			case 'setResourceFolderFavorite':
+				validateResourceFolderSelector(projected, operation.selector, `${operationPath}.selector`, issues, operation.kind);
+				break;
 		}
 		if (issues.length !== issueCount) continue;
 		if (isLifecycleOperation(operation)) {
 			applyUamLifecycleOperation(projected, operation);
 		} else if (isResourceLifecycleOperation(operation)) {
 			applyUamResourceLifecycleOperation(projected, operation);
+		} else if (isResourceFolderLifecycleOperation(operation)) {
+			applyUamResourceFolderLifecycleOperation(projected, operation);
+		} else if (operation.kind === 'setDisplayNodeProps') {
+			applyDisplayNodePropsUpdate(findDisplayNodeSpec(projected, operation.selector)!, operation.props);
+		} else if (operation.kind === 'setResourceFolderFavorite') {
+			findResourceFolder(projected, operation.selector)!.folder.favorite = operation.favorite;
 		} else {
 			applyUamDisplayListRewriteOperation(projected, operation);
 		}
@@ -1818,6 +2549,7 @@ function validateLifecycleBatchCompatibility(
 	const nonLifecycleIndex = operations.findIndex((operation) => (
 		!isLifecycleOperation(operation)
 		&& !isResourceLifecycleOperation(operation)
+		&& !isResourceFolderLifecycleOperation(operation)
 		&& !isDisplayListRewriteOperation(operation)
 		&& operation.kind !== 'setDisplayNodeProps'
 	));
@@ -1833,11 +2565,131 @@ function validateLifecycleBatchCompatibility(
 	return false;
 }
 
+function requiresSequentialDisplayProjection(operations: UamTransactionOperation[]): boolean {
+	const hasDisplayListRewrite = operations.some(isDisplayListRewriteOperation);
+	return operations.some(isLifecycleOperation)
+		|| operations.some(isResourceLifecycleOperation)
+		|| operations.some(isResourceFolderLifecycleOperation)
+		|| (
+			hasDisplayListRewrite
+			&& (
+				operations.some(isResourceLifecycleOperation)
+				|| operations.some((operation) => operation.kind === 'setDisplayNodeProps')
+			)
+		);
+}
+
+function projectedAssetFileName(
+	project: UamProject,
+	operations: UamTransactionOperation[],
+	operationIndex: number,
+	selector: UamResourceSelector,
+): string {
+	const resource = findResourceSpec(project, selector);
+	let fileName = resource && resource.kind !== 'component'
+		? resource.fileName ?? ('file' in resource ? resource.file : undefined) ?? ''
+		: '';
+	for (let index = 0; index < operationIndex; index += 1) {
+		const operation = operations[index]!;
+		if (operation.kind === 'addResource') {
+			if (operation.selector.packageId === selector.packageId && operation.resource.id === selector.resourceId) {
+				fileName = operation.resource.fileName
+					?? ('file' in operation.resource ? operation.resource.file : undefined)
+					?? '';
+			}
+			continue;
+		}
+		if (!('selector' in operation)
+			|| operation.selector.packageId !== selector.packageId
+			|| !('resourceId' in operation.selector)
+			|| operation.selector.resourceId !== selector.resourceId
+		) continue;
+		if (operation.kind === 'removeResource') fileName = '';
+		if (operation.kind === 'renameResource' && fileName) {
+			fileName = renamedResourceFileName(fileName, operation.newName);
+		}
+	}
+	return fileName;
+}
+
+function imageReplacementSurvives(
+	operations: UamTransactionOperation[],
+	operationIndex: number,
+	selector: UamResourceSelector,
+): boolean {
+	for (let index = operationIndex + 1; index < operations.length; index += 1) {
+		const operation = operations[index]!;
+		if (operation.kind === 'addResource') {
+			if (operation.selector.packageId === selector.packageId && operation.resource.id === selector.resourceId) return false;
+			continue;
+		}
+		if (!('selector' in operation)
+			|| operation.selector.packageId !== selector.packageId
+			|| !('resourceId' in operation.selector)
+			|| operation.selector.resourceId !== selector.resourceId
+		) continue;
+		if (operation.kind === 'replaceResourceBytes' || operation.kind === 'removeResource') return false;
+	}
+	return true;
+}
+
 function validateOperationPayloads(project: UamProject, operations: UamTransactionOperation[], issues: UamTransactionSupportIssue[]): void {
-	const hasLifecycleOperation = operations.some(isLifecycleOperation);
+	const usesSequentialDisplayProjection = requiresSequentialDisplayProjection(operations);
+	let projectedSettings = canonicalProjectSettings(project.settings);
+	const projectedPackageSettings = new Map<string, UamPackageSettings>();
 	for (const [operationIndex, operation] of operations.entries()) {
 		const operationPath = `operations[${operationIndex}]`;
 		switch (operation.kind) {
+			case 'updateProjectSettings': {
+				const issueCount = issues.length;
+				validateProjectSettingsPayload(operation.settings, `${operationPath}.settings`, issues, operation.kind);
+				if (issues.length === issueCount) {
+					const nextSettings = canonicalProjectSettings(operation.settings);
+					if (stableJson(nextSettings) === stableJson(projectedSettings)) {
+						pushSupportIssue(
+							issues,
+							'project_settings_unchanged',
+							`${operationPath}.settings`,
+							'updateProjectSettings must change the complete settings snapshot.',
+							{ operationKind: operation.kind },
+						);
+					} else {
+						projectedSettings = nextSettings;
+					}
+				}
+				break;
+			}
+			case 'updatePackageSettings': {
+				const pkg = validateLifecyclePackageSelector(
+					project,
+					operation.selector,
+					`${operationPath}.selector`,
+					issues,
+					operation.kind,
+				);
+				const valid = validatePackageSettingsPayload(
+					operation.settings,
+					`${operationPath}.settings`,
+					issues,
+					operation.kind,
+				);
+				if (pkg && valid) {
+					const current = projectedPackageSettings.get(pkg.id) ?? packageSettingsSnapshot(pkg);
+					const next = canonicalPackageSettings(operation.settings);
+					if (stableJson(next) === stableJson(current)) {
+						pushSupportIssue(
+							issues,
+							'package_settings_unchanged',
+							`${operationPath}.settings`,
+							'updatePackageSettings must change the complete settings snapshot.',
+							{ operationKind: operation.kind },
+						);
+					} else {
+						projectedPackageSettings.set(pkg.id, next);
+					}
+				}
+				break;
+			}
 			case 'renameResource':
 				validateTouchedResourceKind(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
 				validateAssetSourceBytes(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
@@ -1876,6 +2728,32 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 					);
 				}
 				break;
+			case 'setResourceFolderFavorite':
+				if (!usesSequentialDisplayProjection) {
+					validateResourceFolderSelector(project, operation.selector, `${operationPath}.selector`, issues, operation.kind);
+				}
+				if (typeof operation.favorite !== 'boolean') {
+					pushSupportIssue(
+						issues,
+						'invalid_resource_payload',
+						`${operationPath}.favorite`,
+						'setResourceFolderFavorite.favorite must be boolean.',
+						{ operationKind: operation.kind },
+					);
+				}
+				break;
+			case 'setResourceExported':
+				validateTouchedResourceKind(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
+				if (typeof operation.exported !== 'boolean') {
+					pushSupportIssue(
+						issues,
+						'invalid_resource_payload',
+						`${operationPath}.exported`,
+						'setResourceExported.exported must be boolean.',
+						{ operationKind: operation.kind },
+					);
+				}
+				break;
 			case 'setImageResourceProps': {
 				validateTouchedResourceKind(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
 				const resource = findProjectedResource(project, operations, operationIndex, operation.selector);
@@ -1901,7 +2779,7 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 			case 'addResource':
 				validateAssetResourcePayload(project, operations, operationIndex, operation.selector, operation.resource, operationPath, issues, operation.kind);
 				break;
-			case 'replaceResourceBytes':
+			case 'replaceResourceBytes': {
 				validateTouchedResourceKind(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
 				validateBinaryResourceTarget(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
 				validateAssetSourceBytes(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
@@ -1913,12 +2791,94 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 						'replaceResourceBytes.sourceBytes must be a Uint8Array.',
 						{ operationKind: operation.kind },
 					);
+					break;
+				}
+				const resource = findProjectedResource(project, operations, operationIndex, operation.selector);
+				if (resource?.kind === 'movieClip') {
+					try {
+						deriveMovieClipModelFromJta(operation.sourceBytes);
+					} catch (error) {
+						pushSupportIssue(
+							issues,
+							'invalid_movie_clip_jta',
+							`${operationPath}.sourceBytes`,
+							error instanceof Error ? error.message : 'MovieClip replacement bytes are not a valid JTA file.',
+							{ operationKind: operation.kind, resourceKind: resource.kind },
+						);
+					}
+					break;
+				}
+				if (resource?.kind !== 'image') break;
+				const fileName = projectedAssetFileName(project, operations, operationIndex, operation.selector);
+				const expectedFormat = rasterImageFormatFromFileName(fileName);
+				if (!expectedFormat) {
+					pushSupportIssue(
+						issues,
+						'unsupported_resource_mutation',
+						`${operationPath}.sourceBytes`,
+						`replaceResourceBytes only supports PNG and JPEG image sources; "${fileName}" is unsupported.`,
+						{ operationKind: operation.kind, resourceKind: resource.kind },
+					);
+					break;
+				}
+				if (browserRasterValidationRequired(operation.sourceBytes)) {
+					pushSupportIssue(
+						issues,
+						'unsupported_resource_mutation',
+						`${operationPath}.sourceBytes`,
+						'Browser image replacement requires applyUamTransactionAsync so decoding does not block the main thread.',
+						{ operationKind: operation.kind, resourceKind: resource.kind },
+					);
+					break;
+				}
+				const imageInfo = probeRasterImage(operation.sourceBytes);
+				if (!imageInfo || imageInfo.format !== expectedFormat) {
+					pushSupportIssue(
+						issues,
+						'invalid_resource_bytes',
+						`${operationPath}.sourceBytes`,
+						imageInfo
+							? `Image replacement format "${imageInfo.format}" does not match source file "${fileName}".`
+							: 'Image replacement bytes are not a structurally valid PNG or JPEG source.',
+						{ operationKind: operation.kind, resourceKind: resource.kind },
+					);
+					break;
+				}
+				const finalResource = findProjectedResource(project, operations, operations.length, operation.selector);
+				if (finalResource?.kind === 'image' && imageReplacementSurvives(operations, operationIndex, operation.selector)) {
+					const finalFileName = projectedAssetFileName(project, operations, operations.length, operation.selector);
+					if (finalFileName !== fileName) {
+						const finalFormat = rasterImageFormatFromFileName(finalFileName);
+						if (!finalFormat) {
+							pushSupportIssue(
+								issues,
+								'unsupported_resource_mutation',
+								`${operationPath}.sourceBytes`,
+								`replaceResourceBytes only supports PNG and JPEG image sources; "${finalFileName}" is unsupported.`,
+								{ operationKind: operation.kind, resourceKind: resource.kind },
+							);
+						} else if (imageInfo.format !== finalFormat) {
+							pushSupportIssue(
+								issues,
+								'invalid_resource_bytes',
+								`${operationPath}.sourceBytes`,
+								`Image replacement format "${imageInfo.format}" does not match final source file "${finalFileName}".`,
+								{ operationKind: operation.kind, resourceKind: resource.kind },
+							);
+						}
+					}
 				}
 				break;
+			}
 			case 'removeResource':
 				validateTouchedResourceKind(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
 				validateBinaryResourceTarget(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
 				validateAssetSourceBytes(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
+				break;
+			case 'addResourceFolder':
+			case 'renameResourceFolder':
+			case 'moveResourceFolder':
+			case 'removeResourceFolder':
 				break;
 			case 'setComponentProps': {
 				validateLifecycleComponentSelector(project, operation.selector, `${operationPath}.selector`, issues, operation.kind);
@@ -1975,11 +2935,12 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 				break;
 			}
 			case 'setDisplayNodeProps':
+				if (usesSequentialDisplayProjection) break;
 				validateTouchedDisplayNodeKind(project, operation.selector, `${operationPath}.selector.displayNodeId`, issues, operation.kind);
 				validateDisplayPropsPayload(operation, project, operationPath, issues);
 				break;
 			case 'attachDisplayNode':
-				if (hasLifecycleOperation) break;
+				if (usesSequentialDisplayProjection) break;
 				if (!Number.isInteger(operation.atIndex) || operation.atIndex < 0) {
 					pushSupportIssue(
 						issues,
@@ -1994,7 +2955,7 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 				});
 				break;
 			case 'detachDisplayNode':
-				if (hasLifecycleOperation) break;
+				if (usesSequentialDisplayProjection) break;
 				validateTouchedDisplayNodeKind(project, operation.selector, `${operationPath}.selector.displayNodeId`, issues, operation.kind);
 				break;
 			case 'addController':
@@ -2047,6 +3008,9 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 				validateGearSelector(project, operations, operationIndex, operation.selector, `${operationPath}.selector`, issues, operation.kind);
 				validateExistingGear(project, operations, operationIndex, operation.selector, `${operationPath}.selector`, issues, operation.kind);
 				break;
+			case 'addBranch':
+			case 'renameBranch':
+			case 'removeBranch':
 			case 'addPackage':
 			case 'renamePackage':
 			case 'removePackage':
@@ -2054,6 +3018,16 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 			case 'removeComponent':
 			case 'moveComponent':
 				break;
+			default: {
+				const unknownOperation = operation as { kind?: unknown };
+				pushSupportIssue(
+					issues,
+					'unsupported_operation',
+					`${operationPath}.kind`,
+					`Unsupported transaction operation "${String(unknownOperation.kind)}".`,
+				);
+				break;
+			}
 		}
 	}
 }
@@ -2390,10 +3364,7 @@ export function validateTransactionSupport(
 	validateOperationPayloads(project, operations, issues);
 	if (
 		lifecycleOnly
-		&& (
-			operations.some(isLifecycleOperation)
-			|| (operations.some(isResourceLifecycleOperation) && operations.some(isDisplayListRewriteOperation))
-		)
+		&& requiresSequentialDisplayProjection(operations)
 	) {
 		validateLifecycleOperationPayloads(project, operations, issues);
 	}

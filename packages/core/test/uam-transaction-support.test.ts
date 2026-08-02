@@ -14,6 +14,7 @@ import {
 	type UamDisplayNode,
 	type UamDisplayNodePropsUpdate,
 	type UamGraphProperties,
+	type UamGroupProperties,
 	type UamImageResourceProperties,
 	type UamListNode,
 	type UamListProperties,
@@ -42,13 +43,23 @@ const DISPLAY_NODE_BASE_KEYS = [
 	'name',
 	'position',
 	'size',
+	'locked',
+	'aspect',
+	'minSize',
+	'maxSize',
 	'pivot',
 	'pivotAsAnchor',
+	'scale',
+	'skew',
 	'visible',
 	'touchable',
 	'grayed',
 	'alpha',
 	'rotation',
+	'tooltips',
+	'blendMode',
+	'filter',
+	'filterData',
 	'customData',
 	'relations',
 	'gears',
@@ -59,6 +70,24 @@ function readSpecificProperties<T>(node: UamDisplayNode): T {
 	const snapshot = structuredClone(node) as unknown as Record<string, unknown>;
 	for (const key of DISPLAY_NODE_BASE_KEYS) delete snapshot[key];
 	return snapshot as T;
+}
+
+const COMMON_DISPLAY_PROPERTY_KEYS = [
+	'locked',
+	'aspect',
+	'minSize',
+	'maxSize',
+	'scale',
+	'skew',
+	'tooltips',
+	'blendMode',
+	'filter',
+	'filterData',
+] as const satisfies readonly (keyof UamDisplayNode)[];
+
+function readCommonDisplayProperties(node: UamDisplayNode): Pick<UamDisplayNode, (typeof COMMON_DISPLAY_PROPERTY_KEYS)[number]> {
+	return Object.fromEntries(COMMON_DISPLAY_PROPERTY_KEYS.map((key) => [key, structuredClone(node[key])])) as
+		Pick<UamDisplayNode, (typeof COMMON_DISPLAY_PROPERTY_KEYS)[number]>;
 }
 
 test('image resource properties survive transaction, save/reload, inverse, and second reload', async (t) => {
@@ -160,6 +189,180 @@ test('image resource properties survive transaction, save/reload, inverse, and s
 	t.true(incompleteIssues.some((issue) => issue.code === 'invalid_resource_payload'));
 });
 
+test('image source replacement validates format and refreshes dimensions through inverse reload', async (t) => {
+	const project = await readProjectAsUam(new NodeIO(), LAYABOX_PROJECT_PATH, { hydrateResourceBytes: true });
+	const images = project.packages.flatMap((pkg) => pkg.resources.flatMap((resource) => (
+		resource.kind === 'image'
+			&& resource.sourceBytes instanceof Uint8Array
+			&& resource.dimensions
+			&& resource.fileName
+			? [{ pkg, resource }]
+			: []
+	)));
+	const pngImages = images.filter(({ resource }) => resource.fileName?.toLowerCase().endsWith('.png'));
+	const target = pngImages.find(({ resource }, index) => pngImages.some(({ resource: donor }, donorIndex) => (
+		donorIndex !== index
+		&& (resource.dimensions?.width !== donor.dimensions?.width
+			|| resource.dimensions?.height !== donor.dimensions?.height)
+	)));
+	const donor = target && pngImages.find(({ resource }) => resource.id !== target.resource.id
+		&& (resource.dimensions?.width !== target.resource.dimensions?.width
+			|| resource.dimensions?.height !== target.resource.dimensions?.height));
+	if (!target || !donor || !target.resource.sourceBytes || !target.resource.dimensions || !donor.resource.sourceBytes || !donor.resource.dimensions) {
+		t.fail('expected two hydrated PNG resources with different dimensions');
+		return;
+	}
+
+	const selector = { packageId: target.pkg.id, resourceId: target.resource.id };
+	const originalBytes = new Uint8Array(target.resource.sourceBytes);
+	const originalDimensions = structuredClone(target.resource.dimensions);
+	const imageProps = structuredClone(target.resource.image);
+	const forward: UamTransactionOperation = {
+		kind: 'replaceResourceBytes',
+		selector,
+		sourceBytes: new Uint8Array(donor.resource.sourceBytes),
+	};
+	t.deepEqual(validateTransactionSupport(project, [forward]), []);
+	const applied = applyUamTransaction(project, [forward]);
+	const appliedImage = applied.packages.find((pkg) => pkg.id === selector.packageId)?.resources
+		.find((resource) => resource.id === selector.resourceId);
+	if (appliedImage?.kind !== 'image') {
+		t.fail('expected replaced image resource');
+		return;
+	}
+	t.deepEqual(appliedImage.dimensions, donor.resource.dimensions);
+	t.deepEqual(appliedImage.sourceBytes, donor.resource.sourceBytes);
+	t.deepEqual(appliedImage.image, imageProps);
+
+	const committed = await roundTripCommittedProject(applied);
+	const committedImage = committed.packages.find((pkg) => pkg.id === selector.packageId)?.resources
+		.find((resource) => resource.id === selector.resourceId);
+	if (committedImage?.kind !== 'image') {
+		t.fail('expected reloaded replaced image resource');
+		return;
+	}
+	t.deepEqual(committedImage.dimensions, donor.resource.dimensions);
+	t.deepEqual(committedImage.sourceBytes, donor.resource.sourceBytes);
+	const staleMetadata = structuredClone(applied);
+	const staleImage = staleMetadata.packages.find((pkg) => pkg.id === selector.packageId)?.resources
+		.find((resource) => resource.id === selector.resourceId);
+	if (staleImage?.kind === 'image') staleImage.dimensions = structuredClone(originalDimensions);
+	const hydratedFromStaleMetadata = await roundTripCommittedProject(staleMetadata);
+	const hydratedStaleImage = hydratedFromStaleMetadata.packages.find((pkg) => pkg.id === selector.packageId)?.resources
+		.find((resource) => resource.id === selector.resourceId);
+	t.deepEqual(hydratedStaleImage?.kind === 'image' ? hydratedStaleImage.dimensions : undefined, donor.resource.dimensions);
+
+	const restored = await roundTripCommittedProject(applyUamTransaction(committed, [{
+		kind: 'replaceResourceBytes',
+		selector,
+		sourceBytes: originalBytes,
+	}]));
+	const restoredImage = restored.packages.find((pkg) => pkg.id === selector.packageId)?.resources
+		.find((resource) => resource.id === selector.resourceId);
+	if (restoredImage?.kind !== 'image') {
+		t.fail('expected inverse-reloaded image resource');
+		return;
+	}
+	t.deepEqual(restoredImage.dimensions, originalDimensions);
+	t.deepEqual(restoredImage.sourceBytes, originalBytes);
+	t.deepEqual(restoredImage.image, imageProps);
+
+	const invalidBytes = new Uint8Array([1, 2, 3, 4]);
+	const invalidIssues = validateTransactionSupport(project, [{ ...forward, sourceBytes: invalidBytes }]);
+	t.true(invalidIssues.some((issue) => issue.code === 'invalid_resource_bytes'
+		&& issue.path === 'operations[0].sourceBytes'));
+	const forgedPng = new Uint8Array(donor.resource.sourceBytes.slice(0, 24));
+	t.true(validateTransactionSupport(project, [{ ...forward, sourceBytes: forgedPng }])
+		.some((issue) => issue.code === 'invalid_resource_bytes'));
+	const invalidBatch = t.throws(() => applyUamTransaction(project, [
+		{ kind: 'setResourceFavorite', selector, favorite: !target.resource.favorite },
+		{ ...forward, sourceBytes: invalidBytes },
+	]), { instanceOf: UamTransactionError });
+	t.true(invalidBatch?.issues?.some((issue) => 'code' in issue && issue.code === 'invalid_resource_bytes') ?? false);
+	t.deepEqual(target.resource.sourceBytes, originalBytes);
+	t.deepEqual(target.resource.dimensions, originalDimensions);
+
+	const renamedToJpeg = target.resource.fileName!.replace(/\.[^.]+$/, '.jpg');
+	t.true(validateTransactionSupport(project, [
+		{ kind: 'renameResource', selector, newName: renamedToJpeg },
+		forward,
+	]).some((issue) => issue.code === 'invalid_resource_bytes'));
+	t.true(validateTransactionSupport(project, [
+		forward,
+		{ kind: 'renameResource', selector, newName: renamedToJpeg },
+	]).some((issue) => issue.code === 'invalid_resource_bytes'));
+	t.true(validateTransactionSupport(project, [
+		{ kind: 'renameResource', selector, newName: renamedToJpeg },
+		forward,
+		{ kind: 'renameResource', selector, newName: target.resource.fileName! },
+	]).some((issue) => issue.code === 'invalid_resource_bytes'
+		&& issue.path === 'operations[1].sourceBytes'));
+	t.deepEqual(validateTransactionSupport(project, [
+		forward,
+		{ kind: 'renameResource', selector, newName: renamedToJpeg },
+		{ kind: 'renameResource', selector, newName: target.resource.fileName! },
+	]), []);
+	const readdedImage = structuredClone(target.resource);
+	delete readdedImage.sourcePath;
+	readdedImage.name = 'replacement';
+	readdedImage.fileName = 'replacement.png';
+	const lifecycleReplacement: UamTransactionOperation[] = [
+		{ kind: 'renameResource', selector, newName: renamedToJpeg },
+		{ kind: 'removeResource', selector },
+		{ kind: 'addResource', selector: { packageId: selector.packageId }, resource: readdedImage },
+		forward,
+	];
+	t.deepEqual(validateTransactionSupport(project, lifecycleReplacement), []);
+	t.notThrows(() => applyUamTransaction(project, lifecycleReplacement));
+	const unsupported = structuredClone(project);
+	const unsupportedTarget = unsupported.packages.find((pkg) => pkg.id === selector.packageId)?.resources
+		.find((resource) => resource.id === selector.resourceId);
+	if (unsupportedTarget?.kind === 'image') unsupportedTarget.fileName = 'unsupported.webp';
+	t.true(validateTransactionSupport(unsupported, [forward])
+		.some((issue) => issue.code === 'unsupported_resource_mutation'));
+
+	const jpegImages = images.filter(({ resource }) => resource.sourceBytes?.[0] === 0xff && resource.sourceBytes[1] === 0xd8);
+	const jpeg = jpegImages.find(({ resource }, index) => jpegImages.some(({ resource: donor }, donorIndex) => (
+		donorIndex !== index
+		&& (resource.dimensions?.width !== donor.dimensions?.width
+			|| resource.dimensions?.height !== donor.dimensions?.height)
+	)));
+	const jpegDonor = jpeg && jpegImages.find(({ resource }) => resource.id !== jpeg.resource.id
+		&& (resource.dimensions?.width !== jpeg.resource.dimensions?.width
+			|| resource.dimensions?.height !== jpeg.resource.dimensions?.height));
+	if (!jpeg || !jpegDonor || !jpeg.resource.sourceBytes || !jpeg.resource.dimensions
+		|| !jpegDonor.resource.sourceBytes || !jpegDonor.resource.dimensions
+	) {
+		t.fail('expected two hydrated JPEG resources with different dimensions');
+		return;
+	}
+	const jpegProject = structuredClone(project);
+	const jpegTarget = jpegProject.packages.find((pkg) => pkg.id === jpeg.pkg.id)?.resources
+		.find((resource) => resource.id === jpeg.resource.id);
+	if (jpegTarget?.kind !== 'image') {
+		t.fail('expected cloned JPEG resource');
+		return;
+	}
+	jpegTarget.fileName = jpegTarget.fileName?.replace(/\.jpe?g$/i, '.JPEG');
+	const jpegOperation: UamTransactionOperation = {
+		kind: 'replaceResourceBytes',
+		selector: { packageId: jpeg.pkg.id, resourceId: jpeg.resource.id },
+		sourceBytes: new Uint8Array(jpegDonor.resource.sourceBytes),
+	};
+	t.deepEqual(validateTransactionSupport(jpegProject, [jpegOperation]), []);
+	t.true(validateTransactionSupport(jpegProject, [{
+		...jpegOperation,
+		sourceBytes: new Uint8Array(jpegDonor.resource.sourceBytes.slice(0, -2)),
+	}]).some((issue) => issue.code === 'invalid_resource_bytes'));
+	t.true(validateTransactionSupport(project, [{
+		...forward,
+		sourceBytes: new Uint8Array(jpeg.resource.sourceBytes),
+	}]).some((issue) => issue.code === 'invalid_resource_bytes'));
+	const replacedJpeg = applyUamTransaction(jpegProject, [jpegOperation]).packages
+		.find((pkg) => pkg.id === jpeg.pkg.id)?.resources.find((resource) => resource.id === jpeg.resource.id);
+	t.deepEqual(replacedJpeg?.kind === 'image' ? replacedJpeg.dimensions : undefined, jpegDonor.resource.dimensions);
+});
+
 test('assertTransactionSupported accepts current materialization scope and rejects unsupported cross-package refs', (t) => {
 	const buttonNodeProject = createSupportedProject();
 	const componentResource = buttonNodeProject.packages[0]!.resources[1];
@@ -224,6 +427,8 @@ test('assertTransactionSupported accepts current materialization scope and rejec
 		id: 'pkg002',
 		name: 'Shared',
 		publish: null,
+		branchNames: [],
+		folders: [],
 		resources: [
 			{
 				kind: 'image',
@@ -619,13 +824,7 @@ test('graph, loader, list, and tree property snapshots survive transaction lifec
 		...createDisplayNodeBase('graph-props', 'graph'),
 		pivot: { x: 0, y: 0 },
 		pivotAsAnchor: false,
-		locked: false,
-		minWidth: 0,
-		maxWidth: 0,
-		minHeight: 0,
-		maxHeight: 0,
 		group: '',
-		skew: { x: 0, y: 0 },
 		graphType: 1,
 		lineSize: 1,
 		lineColor: '#000000',
@@ -640,10 +839,7 @@ test('graph, loader, list, and tree property snapshots survive transaction lifec
 		kind: 'loader',
 		...createDisplayNodeBase('loader-props', 'loader', 16),
 		pivot: { x: 0, y: 0 },
-		scale: { x: 1, y: 1 },
 		url: '',
-		filter: '',
-		filterData: '',
 		fill: 0,
 		shrinkOnly: false,
 		autoSize: false,
@@ -681,12 +877,6 @@ test('graph, loader, list, and tree property snapshots survive transaction lifec
 	const initialTree = readSpecificProperties<UamTreeProperties>(tree);
 	const updatedGraph: UamGraphProperties = {
 		...initialGraph,
-		locked: true,
-		minWidth: 10,
-		maxWidth: 200,
-		minHeight: 12,
-		maxHeight: 160,
-		skew: { x: 2, y: 3 },
 		graphType: 4,
 		lineSize: 3,
 		lineColor: '#112233',
@@ -699,10 +889,7 @@ test('graph, loader, list, and tree property snapshots survive transaction lifec
 	};
 	const updatedLoader: UamLoaderProperties = {
 		...initialLoader,
-		scale: { x: 1.25, y: 0.75 },
 		url: 'ui://pkg001img001',
-		filter: 'color',
-		filterData: '1,0,0,1',
 		fill: 5,
 		shrinkOnly: true,
 		autoSize: true,
@@ -885,6 +1072,99 @@ test('graph, loader, list, and tree property snapshots survive transaction lifec
 	}
 	assertProperties(mixedComponent.component.displayList.find((node) => node.id === graph.id), updatedGraph);
 	t.is(mixed.packages[0]?.resources.find((resource) => resource.id === 'img001')?.name, 'renamed');
+});
+
+test('common display and group properties survive transaction, save/reload, inverse, and invalid target checks', async (t) => {
+	const project = normalizeUamProject(createSupportedProject());
+	const component = project.packages[0]?.resources.find((resource) => resource.id === 'cmp001');
+	if (component?.kind !== 'component') {
+		t.fail('expected component resource');
+		return;
+	}
+	const text = component.component.displayList.find((node) => node.id === 'n1')!;
+	const group: UamDisplayNode = {
+		kind: 'group',
+		...createDisplayNodeBase('group-props', 'group'),
+		group: '',
+		layout: 0,
+		lineGap: 0,
+		columnGap: 0,
+		advanced: false,
+		excludeInvisibles: false,
+		autoSizeDisabled: false,
+		mainGridIndex: -1,
+	};
+	component.component.displayList.push(group);
+	const originalCommon = readCommonDisplayProperties(text);
+	const originalGroup: UamGroupProperties = readSpecificProperties(group);
+	const updatedCommon = {
+		locked: true,
+		aspect: true,
+		minSize: { width: 10, height: 12 },
+		maxSize: { width: 500, height: 400 },
+		scale: { x: 1.25, y: 0.75 },
+		skew: { x: 5, y: 7 },
+		tooltips: 'tip',
+		blendMode: 'add',
+		filter: 'color',
+		filterData: '1,0.5,0.25,1',
+	} as const;
+	const updatedGroup: UamGroupProperties = {
+		layout: 1,
+		lineGap: 4,
+		columnGap: 6,
+		advanced: true,
+		excludeInvisibles: true,
+		autoSizeDisabled: false,
+		mainGridIndex: 0,
+	};
+	const selector = (displayNodeId: string) => ({
+		packageId: 'pkg001',
+		componentResourceId: 'cmp001',
+		displayNodeId,
+	});
+	const forward: UamTransactionOperation[] = [
+		{ kind: 'setDisplayNodeProps', selector: selector(text.id), props: updatedCommon },
+		{ kind: 'setDisplayNodeProps', selector: selector(group.id), props: { groupProperties: updatedGroup } },
+	];
+	t.deepEqual(validateTransactionSupport(project, forward), []);
+	const committed = await roundTripCommittedProject(applyUamTransaction(project, forward));
+	const committedComponent = committed.packages[0]?.resources.find((resource) => resource.id === 'cmp001');
+	if (committedComponent?.kind !== 'component') {
+		t.fail('expected committed component resource');
+		return;
+	}
+	const committedText = committedComponent.component.displayList.find((node) => node.id === text.id)!;
+	const committedGroup = committedComponent.component.displayList.find((node) => node.id === group.id)!;
+	t.deepEqual(readCommonDisplayProperties(committedText), updatedCommon);
+	t.deepEqual(readSpecificProperties(committedGroup), updatedGroup);
+
+	const inverse: UamTransactionOperation[] = [
+		{ kind: 'setDisplayNodeProps', selector: selector(text.id), props: originalCommon },
+		{ kind: 'setDisplayNodeProps', selector: selector(group.id), props: { groupProperties: originalGroup } },
+	];
+	const restored = await roundTripCommittedProject(applyUamTransaction(committed, inverse));
+	const restoredComponent = restored.packages[0]?.resources.find((resource) => resource.id === 'cmp001');
+	if (restoredComponent?.kind !== 'component') {
+		t.fail('expected restored component resource');
+		return;
+	}
+	t.deepEqual(readCommonDisplayProperties(restoredComponent.component.displayList.find((node) => node.id === text.id)!), originalCommon);
+	t.deepEqual(readSpecificProperties(restoredComponent.component.displayList.find((node) => node.id === group.id)!), originalGroup);
+
+	const invalidTarget = [{
+		kind: 'setDisplayNodeProps' as const,
+		selector: selector(text.id),
+		props: { groupProperties: updatedGroup },
+	}];
+	t.true(validateTransactionSupport(project, invalidTarget).some((issue) => issue.code === 'unsupported_display_node_field'));
+	t.throws(() => applyUamTransaction(project, invalidTarget), { instanceOf: UamTransactionError });
+	t.deepEqual(readCommonDisplayProperties(text), originalCommon, 'invalid target leaves source state unchanged');
+	t.true(validateTransactionSupport(project, [{
+		kind: 'setDisplayNodeProps',
+		selector: selector(text.id),
+		props: { minSize: { width: 20, height: 10 }, maxSize: { width: 10, height: 5 } },
+	}]).some((issue) => issue.code === 'invalid_display_node_payload'));
 });
 
 test('Phase A transactions support common FairyGUI display node kinds for common props', (t) => {

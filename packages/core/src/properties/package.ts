@@ -22,6 +22,34 @@ type PackageResource =
 	| SpineResource
 	| DragonBonesResource;
 
+export interface PackageResourceFolder {
+	branch: string;
+	path: string;
+	favorite: boolean;
+	atlas: string;
+}
+
+export type PackageAtlasSizeOption = 'pot' | 'npot' | 'mof';
+
+export interface PackageSourceAtlas {
+	index: number;
+	name: string;
+	compression: boolean;
+}
+
+export interface PackageSourceAtlasSettings {
+	useGlobal: boolean;
+	maxSize: number;
+	sizeOption: PackageAtlasSizeOption;
+	forceSquare: boolean;
+	allowRotation: boolean;
+	paging: boolean;
+	extractAlpha: boolean;
+	maxIndex: number;
+	atlases: PackageSourceAtlas[];
+	excludedResourceIds: string[];
+}
+
 interface IPackage extends IExtensibleProperty {
 	id: string;
 	compressPNG: boolean | null;
@@ -32,6 +60,9 @@ interface IPackage extends IExtensibleProperty {
 	publishPackageCount: number;
 	genCode: boolean;
 	codePath: string;
+	sourceAtlasSettings: PackageSourceAtlasSettings;
+	branchNames: string[];
+	resourceFolders: PackageResourceFolder[];
 	resources: RefSet<Property>;
 	atlases: RefSet<Atlas>;
 	dependencies: RefSet<Property>;
@@ -63,6 +94,20 @@ export class Package extends ExtensibleProperty<IPackage> {
 			publishPackageCount: 0,
 			genCode: false,
 			codePath: '',
+			sourceAtlasSettings: {
+				useGlobal: true,
+				maxSize: 2048,
+				sizeOption: 'pot',
+				forceSquare: false,
+				allowRotation: false,
+				paging: true,
+				extractAlpha: false,
+				maxIndex: 10,
+				atlases: [],
+				excludedResourceIds: [],
+			},
+			branchNames: [],
+			resourceFolders: [],
 			resources: new RefSet<Property>(),
 			atlases: new RefSet<Atlas>(),
 			dependencies: new RefSet<Property>(),
@@ -139,6 +184,44 @@ export class Package extends ExtensibleProperty<IPackage> {
 
 	public setCodePath(path: string): this {
 		return this.set('codePath', path);
+	}
+
+	public getSourceAtlasSettings(): PackageSourceAtlasSettings {
+		const settings = this.get('sourceAtlasSettings');
+		return {
+			...settings,
+			atlases: settings.atlases.map((atlas) => ({ ...atlas })),
+			excludedResourceIds: [...settings.excludedResourceIds],
+		};
+	}
+
+	public setSourceAtlasSettings(settings: PackageSourceAtlasSettings): this {
+		return this.set('sourceAtlasSettings', {
+			...settings,
+			atlases: settings.atlases.map((atlas) => ({ ...atlas })),
+			excludedResourceIds: [...settings.excludedResourceIds],
+		});
+	}
+
+	public listBranchNames(): string[] {
+		return [...this.get('branchNames')];
+	}
+
+	public setBranchNames(names: string[]): this {
+		return this.set('branchNames', [...names]);
+	}
+
+	public addBranchName(name: string): this {
+		if (!this.get('branchNames').includes(name)) this.set('branchNames', [...this.get('branchNames'), name]);
+		return this;
+	}
+
+	public listResourceFolders(): PackageResourceFolder[] {
+		return (this.get('resourceFolders' as never) as PackageResourceFolder[]).map((folder) => ({ ...folder }));
+	}
+
+	public setResourceFolders(folders: PackageResourceFolder[]): this {
+		return this.set('resourceFolders' as never, folders.map((folder) => ({ ...folder })) as never);
 	}
 
 	public addResource(resource: PackageResource): this {

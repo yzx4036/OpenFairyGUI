@@ -143,11 +143,11 @@ flowchart LR
 
 补充说明：
 - `@openfairygui/core` 当前同时承载 UAM 主真相层与内部图物化层。
-- `packages/core/src/uam/model.ts` 当前的 materialization scope 覆盖现有全部 display node 类：`GImage`、`GTextField`、`GRichTextField`、`GTextInput`、`GComponent`、`GList`、`GTree`、`GGraph`、`GGroup`、`GLoader`、`GLoader3D`、`GMovieClip`、`GButton`、`GLabel`、`GComboBox`、`GProgressBar`、`GSlider`、`GScrollBar`。组件定义的完整根属性由 `component.properties` 承载，`GComponent` 引用节点的具体扩展覆盖由 `instanceProperties` 承载，图片资源与文本对象的正式工程属性分别由完整属性快照承载；`group` 只属于协议支持该字段的 display node，`GLoader / GLoader3D` 不承载该引用。这些具体属性不通过长期 `extras` 或通用 `metadata` 属性袋承载。
-- `packages/core/src/uam/transaction-contracts.ts` 承载公开 selector、operation、support issue 与 transaction error contract；`transaction.ts` 是稳定门面，support preflight、UAM-native apply、Document-backed apply 与共享定位逻辑分别位于 `transaction-preflight.ts`、`transaction-uam-apply.ts`、`transaction-document-apply.ts`、`transaction-shared.ts`。`commit()` 结果是新的 normalized `UamProject`。纯 `setComponentProps`、`setDisplayNodeProps`、`setImageResourceProps`、幂等 `setResourceFavorite`、包/组件/二进制资源生命周期事务，以及生命周期与 `attachDisplayNode` / `detachDisplayNode` 引用重写的混合批次直接在 UAM 上执行；预检按最终投影状态验证 group、资源和组件引用，因此资源复制、嵌套组件复制、引用重写与组件移动可在同一批次原子提交。未触及的复杂节点、引用、relation、transition 作为 lossless passthrough 保留，其余资源、结构和 gear 事务通过私有 `Document` 工作副本执行，并在失败时整体丢弃。
+- `packages/core/src/uam/model.ts` 当前的 materialization scope 覆盖现有全部 display node 类：`GImage`、`GTextField`、`GRichTextField`、`GTextInput`、`GComponent`、`GList`、`GTree`、`GGraph`、`GGroup`、`GLoader`、`GLoader3D`、`GMovieClip`、`GButton`、`GLabel`、`GComboBox`、`GProgressBar`、`GSlider`、`GScrollBar`。`UamDisplayNodeBase` 正式承载位置、尺寸、锁定、宽高约束、最小/最大尺寸、pivot、缩放、倾斜、可见状态、tooltip、混合模式与滤镜等公共属性；组件定义的完整根属性由 `component.properties` 承载，`GComponent` 引用节点的具体扩展覆盖由 `instanceProperties` 承载，组件实例与静态列表项的有序属性覆盖由各自的 `propertyOverrides` 承载，List/Tree 与 ComboBox 的 `autoClearItems` 保留在对应正式属性中。图片资源、MovieClip 资源与文本对象的正式工程属性分别由完整属性快照承载。`UamMovieClipResource.movieClip` 包含 `interval / repeatDelay / swing / smoothing / frames`，帧快照包含矩形、附加延迟和 sprite id；不兼容旧的通用 `metadata` 属性袋。`group` 只属于协议支持该字段的 display node，`GLoader / GLoader3D` 不承载该引用。这些具体属性不通过长期 `extras` 或通用 `metadata` 属性袋承载。
+- `packages/core/src/uam/transaction-contracts.ts` 承载公开 selector、operation、support issue 与 transaction error contract；`transaction.ts` 是稳定门面，support preflight、UAM-native apply、Document-backed apply 与共享定位逻辑分别位于 `transaction-preflight.ts`、`transaction-uam-apply.ts`、`transaction-document-apply.ts`、`transaction-shared.ts`。`commit()` 结果是新的 normalized `UamProject`。纯 `setComponentProps`、`setDisplayNodeProps`、`setImageResourceProps`、幂等 `setResourceFavorite` / `setResourceFolderFavorite` / `setResourceExported`、包/组件/二进制资源与空资源文件夹生命周期事务，以及生命周期与 `attachDisplayNode` / `detachDisplayNode` 引用重写的混合批次直接在 UAM 上执行；预检按最终投影状态验证 group、资源和组件引用，因此资源复制、嵌套组件复制、引用重写与组件移动可在同一批次原子提交。未触及的复杂节点、引用、relation、transition 作为 lossless passthrough 保留，其余资源、结构和 gear 事务通过私有 `Document` 工作副本执行，并在失败时整体丢弃。
 - `packages/core/src/uam/bridge.ts` 是 UAM 与内部 `Document` 之间的稳定门面；lift、materialize、共享转换与工程 source-file 枚举分别位于 `bridge-lift.ts`、`bridge-materialize.ts`、`bridge-shared.ts`、`project-source-files.ts`。真实工程里可保存但不一定可解析到当前资源图的弱引用会按工程 XML 语义透传：空 relation target 表示组件容器，display resource refs 允许悬空或跨包保留，transition item target 与 display gear pages 允许保留编辑器旧数据。`validateUamProject` 只阻塞会破坏当前物化/写回的硬结构错误。
-- `ProjectReader.read(path, { hydrateResourceBytes: true })` 是 source-byte hydration 的显式入口；它会为 main 与 branch package 中的 image、sound、misc、font、movie-clip、Spine、DragonBones 资源附加 primary source bytes，并拒绝 XML 中包含 traversal 的资源路径。受支持的 JTA v100-v102 movie-clip 会同时把正式边界尺寸写入 `MovieClipResource.width / height`；不支持或不可读的 JTA 保留原有尺寸。UAM bridge 在 lift/materialize 时复制 `Uint8Array`，不以 JSON clone 承载二进制数据。
-- UAM materialization scope 与 transaction scope 是两个独立能力面；全量 display node lift/materialize 不代表 `UamTransactionOperation` 已开放这些 node kind 的全字段 mutation。当前 transaction scope 覆盖组件尺寸/根属性快照、组件引用实例扩展覆盖、已建模资源的 rename/move/favorite 设置、图片资源与文本对象完整属性快照、正式 group 引用、二进制资源 add/replace/remove、包含公共 `pivot / pivotAsAnchor` 的基础 display props、attach/detach、controller、transition，以及 `display`、`display2`、`look`、`xy`、`size`、`color`、`animation`、`text`、`icon`、`fontSize` gear 的 add/update/remove；它仍不开放任意 display-list、controller 或 transition 的面板式编辑。完整文本快照按 `text / richText / textInput` 的正式字段边界校验，不能与同一操作中的便捷 `text / font / fontSize / color` 字段混用。`setImageResourceProps` 只更新 `resource.image`，不替换 primary source bytes，并拒绝非图片 selector、不完整快照、非法缩放模式、九宫格和 tile-grid 位掩码。二进制资源的 rename/move/replace/remove 要求 UAM 持有已水合的 primary source bytes；MovieClip 的 `replaceResourceBytes` 在新字节可解析为 JTA v100-v102 时同步刷新正式尺寸，否则保留已有尺寸。`validateTransactionSupport(project)` 保留全项目体检语义；`validateTransactionSupport(project, operations)` 与实际 transaction preflight 按 operation touch-set 判定，并在物化前拒绝缺失源字节、无效 controller/page、被操作 transition 中的无效 target 引用、重复或无效 gear、不安全的新增资源 source path，以及最终投影状态中的无效 group / 资源 / 组件引用。UAM/writer 同时拒绝会覆盖 package descriptor、component XML 或其他资源的输出目标。
+- `ProjectReader.read(path, { hydrateResourceBytes: true })` 是 source-byte hydration 的显式入口；它会为 main 与 branch package 中的 image、sound、misc、font、movie-clip、Spine、DragonBones 资源附加 primary source bytes，并拒绝 XML 中包含 traversal 的资源路径。可解析且字段合法的 PNG IHDR / JPEG SOF header 是 raster image 尺寸事实来源，会覆盖陈旧 XML 尺寸；批量水合不会扫描完整容器或执行像素解码，`replaceResourceBytes` preflight 才执行 PNG CRC/zlib/scanline 与 JPEG 严格像素校验。SVG 等未受支持格式保留工程声明尺寸。Node/CLI 同步 source/PNG decoded bytes 上限为 128 MiB，JPEG 严格解码另限 8,388,608 pixels 与 64 MiB。受支持的 JTA v100-v102 movie-clip 会从同一份 source bytes 完整派生边界尺寸、播放间隔、循环延迟、swing 与帧矩形/延迟；JTA source bytes 是这些字段的规范事实来源。解析完成后才原子重建 `MovieClipResource` 帧列表，XML 所有的 `smoothing` 不被 JTA 覆盖；不支持或不可读的 JTA 在 hydration 中仍保留原始 source bytes 与 XML 模型。UAM bridge 在 lift/materialize 时复制 `Uint8Array`，不以 JSON clone 承载二进制数据。
+  - UAM materialization scope 与 transaction scope 是两个独立能力面；全量 display node lift/materialize 不代表 `UamTransactionOperation` 已开放这些 node kind 的全字段 mutation。当前 transaction scope 覆盖完整工程设置快照、完整包描述符/发布设置快照、分支注册表安全 add/rename/remove、组件尺寸/根属性快照、组件引用实例扩展覆盖、已建模资源的 rename/move/favorite/exported 设置、资源文件夹 favorite 设置与空资源文件夹 add/rename/move/remove、图片资源与文本对象完整属性快照、正式 group 引用、二进制资源 add/replace/remove、公共 display props（位置、尺寸、锁定、宽高约束、最小/最大尺寸、pivot、缩放、倾斜、可见状态、tooltip、混合模式、滤镜与自定义数据）、`GGroup` 的完整 `groupProperties` 快照、attach/detach、controller、transition，以及 `display`、`display2`、`look`、`xy`、`size`、`color`、`animation`、`text`、`icon`、`fontSize` gear 的 add/update/remove；它仍不开放任意 display-list、controller 或 transition 的面板式编辑。`updateProjectSettings` 在预检中要求 JSON-safe、有限数值并校验所有正式字段，应用时复制完整快照，同时保留未知 JSON-safe 键，相同规范快照以 `project_settings_unchanged` 拒绝；删除可选 i18n/custom-properties 设置后，ProjectWriter 在任何写入前确认 `unlink()` 能力，再于成功写入已保留设置后删除旧 sidecar。`updatePackageSettings` 按 package id 替换根压缩字段和完整 source publish 快照，验证路径、数值范围、稀疏 atlas 槽位与 CSV-safe exclusions，相同规范快照以 `package_settings_unchanged` 拒绝。资源文件夹以规范 `branch + path` 定位，`setResourceFolderFavorite` 只更新 selector 指定的文件夹，客户端可在同一事务中显式提交后代文件夹与资源收藏操作；非空 rename/move/remove 明确在预检拒绝，不做隐式递归重写。完整文本快照按 `text / richText / textInput` 的正式字段边界校验，不能与同一操作中的便捷 `text / font / fontSize / color` 字段混用。`setImageResourceProps` 只更新 `resource.image`，不替换 primary source bytes，并拒绝非图片 selector、不完整快照、非法缩放模式、九宫格和 tile-grid 位掩码。二进制资源的 rename/move/replace/remove 要求 UAM 持有已水合的 primary source bytes；Image 的 `replaceResourceBytes` 只支持文件扩展名匹配且通过 PNG/JPEG 校验的 bytes，并在同一内存事务中刷新正式尺寸，其他图片格式以 `unsupported_resource_mutation` 拒绝，畸形或格式不匹配以 `invalid_resource_bytes` 拒绝。Browser backend 走 `applyUamTransactionAsync`，由包内 Web Worker 执行同一套严格校验；同步入口在 browser 环境拒绝 image replacement，避免主线程容器扫描和像素解码。消费端 bundler 必须把公开入口 `@openfairygui/core/image-validation-worker` 再打成与主 bundle 相邻的 self-contained ESM `image-validation-worker.js`；仅重打主入口或只复制 worker 文件不会带上其解码 chunk。Worker 无响应会在 10 秒后终止，事务继续返回 decoder-unavailable 边界而不会永久占住会话队列。MovieClip 的 `addResource`、包含 MovieClip 的 `addPackage` 与 `replaceResourceBytes` 都先完整解析 JTA v100-v102；成功时在原子 transaction 中用 source bytes 重建完整 typed model，失败时以 `invalid_movie_clip_jta` 拒绝且不改变 UAM、revision、dirty 或 storage。MovieClip 不进入 raster worker，Browser/Node 使用同一解析路径。`validateTransactionSupport(project)` 保留全项目体检语义；`validateTransactionSupport(project, operations)` 与实际 transaction preflight 按 operation touch-set 判定，并在物化前拒绝缺失源字节、无效 controller/page、被操作 transition 中的无效 target 引用、重复或无效 gear、不安全的新增资源 source path，以及最终投影状态中的无效 group / 资源 / 组件引用。UAM/writer 同时拒绝会覆盖 package descriptor、component XML、资源文件夹或其他资源的输出目标。
 - `packages/functions/src/uam-transaction.ts` 当前提供的是建立在上述 transaction contract 之上的 **thin stateless pre-MCP app seam**；它只接收 `UamProject + UamTransactionOperation[]`，返回结构化 app result，不重新定义 selector / op grammar，也不暴露 `Document`。
 - `packages/backend/src/runtime.ts` 当前提供 browser-safe 的第一层 **stateful backend runtime** 并只负责 runtime 装配；公开 runtime contract 与 capability manifest 分别由 `runtime/contracts.ts`、`runtime/capabilities.ts` 承载。它通过 `functions.applyUamTransactionApp` 包装既有 authoring seam，支持 `openProjectSession` 直接从 UAM project 建立纯内存 session，并可在 session 级注入 browser-safe async project storage 承接 clean session `materializeSession` 与 dirty session `saveSession` 工程写回。file-backed `openSession` 会显式水合资源 primary source bytes，并比较原始 `Document` 与 UAM 往返后的完整 `ProjectWriter` 输出；存在未建模写回差异时，session 标记为 `uamFidelity: unsupported`，实际写盘返回 `uam_fidelity_unsupported`。
 - `packages/backend/src/storage.ts` 当前提供 browser-safe 的 async storage adapter factory：`createBackendStorageFileSystem()` 把 OPFS、IndexedDB、ZIP 虚拟文件系统或 File System Access API bridge 适配为 backend/core project writer 可共用的文件系统面，并要求 storage 提供 `unlink`。写回时先写新的工程内容和 primary resource bytes，只有全部写入成功后才按结构化 package source reference 删除已被 rename/move/remove 替换的旧 source files；dirty `saveSession` 始终写回 session 绑定的文件系统。
@@ -177,7 +177,7 @@ flowchart LR
 `publish.ts` 只编排发布设置、资源闭包、atlas、二进制写出与通用代码生成；文件系统、raster backend 与 publish hooks 都由宿主提供。
 
 - `@openfairygui/functions/node` 的 `publishNode()` 组装 Node 文件系统、Sharp 与工程 `plugins/` 自动发现。
-- `@openfairygui/functions/web` 的 `publishBrowser()` 接收调用方的源/输出 `FileSystem`，通过独立 `adapters/web/raster.ts` Canvas adapter 生成 atlas PNG，注入空 hooks，并关闭非 runtime 代码生成。
+- `@openfairygui/functions/web` 的 `publishBrowser()` 接收调用方的源/输出 `FileSystem`，通过独立 `adapters/web/raster.ts` Canvas adapter 生成 atlas PNG，并注入空 hooks。SVG 在解码前经过有尺寸、节点数和输入大小上限的 XML 安全校验；`createImageBitmap` 拒绝已验证 SVG 时仅对 SVG 使用 `HTMLImageElement` Blob URL 回退，并在成功或失败后释放 URL，其他图片格式仍沿用原解码路径。它解析持久化的 Laya 压缩、图集和安全文件扩展名设置，同时保持显式 browser 参数优先；选中包实际请求代码生成或扩展名不安全时，会在 Canvas 检查与输出写入前返回结构化 `unsupported_publish_setting`。失败结果的 `files` 只声明已完成的 `writeFileRaw`，原子提交由宿主文件系统负责。
 - `@openfairygui/functions/node` 的 `restoreNode()` 组装受限 restore 所需的 Node 文件系统与 Sharp 图像提取；CLI 只解析参数并调用该入口。
 
 两种宿主都复用 `publish -> atlas / BinaryWriter` 主链；Web 入口不经过 backend Node bridge。
@@ -189,7 +189,7 @@ flowchart LR
 | 层 | 作用 | 当前典型节点 |
 |---|---|---|
 | `attrs` | 描述节点自身允许的 XML 属性，统一 canonical 名与 aliases | `componentRoot.attrs`、`componentInstance.attrs`、`image.attrs`、`packageImageResource.attrs` |
-| `children` | 描述稳定命名子节点集合，用于 `relation`、`gear*`、`action`、`item`、扩展子节点等结构 | `componentInstance.children`、`controller.children`、`transition.children`、`comboBoxExtension.children` |
+| `children` | 描述稳定命名子节点集合，用于 `relation`、`gear*`、`action`、`item`、有序属性覆盖、扩展子节点等结构 | `componentInstance.children`、`listItem.children`、`controller.children`、`transition.children`、`comboBoxExtension.children` |
 | `containers` | 描述容器型结构，而不是普通 child map；当前用于表达有序多态的 `displayList` | `componentRoot.containers.displayList` |
 
 当前三层结构的职责边界如下：
@@ -222,20 +222,23 @@ flowchart LR
 
 | 节点 | 当前正式读写属性 |
 |---|---|
-| `packageDescription` 骨架 | `id`、由资源收藏状态派生的 `hasFavorites` |
+| `packageDescription` 骨架 | `id`、由资源与资源文件夹收藏状态派生的 `hasFavorites` |
 | `branchDescription` 骨架 | 分支资源清单根节点 |
-| `packageDescription > publish` | `name`、`path`、`branchPath`、`packageCount`、`genCode`、`codePath`，以及子节点 `atlas@name/index` |
+| `packageDescription > publish` | 基本输出/代码生成字段、全局或包级 atlas 参数、`maxAtlasIndex`、`excluded`，以及稀疏子节点 `atlas@name/index/compression` |
+| `folder` | 物理目录提供存在性；需要元数据时读写 `id`、`name`、`path`、`favorite`、`atlas` |
 | 通用资源节点 | `id`、`name`、`path`、`exported`、`favorite` |
 | `image` 资源 | `atlas`、`scale`、`scale9grid`、`width`、`height`、`gridTile`、`qualityOption`、`quality`、`duplicatePadding`、`smoothing` |
-| `movieclip` 资源 | `atlas` |
+| `movieclip` 资源 | `atlas`、`smoothing` |
 | `font` 资源 | `texture`、`renderMode`、`samplePointSize` |
 | `misc` 资源 | 无附加属性；资源文件名由通用 `name` 承载 |
 | `spine` 资源 | `width`、`height`、`require`、`atlasNames`、`anchor` |
 | `dragonbones` 资源 | `width`、`height`、`require`、`atlasNames`、`anchor` |
 
-其中 `image@atlas` 与 `movieclip@atlas` 当前分别作为图片和动画资源的纹理集模式字段读写，在正式模型中由 `ImageResource.textureSetMode` 与 `MovieClipResource.textureSetMode` 承载。
+包描述符中的 source publish atlas 配置由 `Package` 与 `UamPackagePublish` 的正式字段承载；它不复用 `Package.listAtlases()` 的发布期/二进制生成 atlas 集合。ProjectReader、UAM bridge 与 ProjectWriter 因此可以保持完整源配置，同时避免把生成 atlas 反写到工程协议。
 
-`favorite` 是 component/asset 资源的工程编辑元数据，不进入运行时二进制包；`packageDescription@hasFavorites` 不作为独立状态，而在写回时由主分支与资源分支中的收藏资源共同派生。package folder 项尚未进入当前工程资源模型，因此文件夹收藏仍不在这一正式覆盖范围内。
+其中 `image@atlas` 与 `movieclip@atlas` 当前分别作为图片和动画资源的纹理集模式字段读写，在正式模型中由 `ImageResource.textureSetMode` 与 `MovieClipResource.textureSetMode` 承载。`movieclip@smoothing` 缺省为 `true`，仅在 `false` 时写回，并通过 `MovieClipResource.smoothing` 与 `UamMovieClipResource.movieClip.smoothing` 保持读写一致。
+
+`favorite` 是资源与资源文件夹的工程编辑元数据，不进入运行时二进制包；`packageDescription@hasFavorites` 不作为独立状态，而在写回时由主分支与资源分支中的收藏项共同派生。资源文件夹以实际目录为存在性的事实来源，`folder` XML 节点只承载需要持久化的收藏和图集元数据。
 
 ## 当前分支工程目录口径
 
@@ -245,8 +248,12 @@ flowchart LR
 |---|---|
 | `assets/<包名>/package.xml` | 主分支资源清单 |
 | `assets_<branch>/<包名>/package_branch.xml` | 指定分支的资源清单 |
+| `assets[/_<branch>]/<包名>/<folder>/` | UAM `package.folders` 的实际目录；空目录也会读写保留 |
 | `Root.branches` | 当前工程已发现的分支名列表 |
+| `Package.branchNames` | 当前包的有序分支表；由 `package.xml` 的 `branchNames` JSON 数组持久化，并独立定义该包二进制 `branchItemIds` 的槽位 |
 | 资源节点 `branch` | 分支资源通过正式资源字段区分，不再停留在临时 `extras` |
+
+ProjectReader 读取 `package.xml` 的包内分支顺序，并在所有主/分支资源注册完成后按资源类型、路径和名称重建主资源的包内分支 ID 映射。ProjectWriter 总是创建每个 `Root.branches` 对应的根目录，并为 `Package.branchNames` 中的空槽位写空分支描述；保存完成后再通过受控分支目录清单非递归删除旧目录。
 
 ## 当前发布附属资源口径
 
@@ -328,7 +335,7 @@ flowchart TD
 - `addComponent` 以完整 `UamComponentResource` 快照和 `atIndex` 新增组件，快照包含初始 `displayList`、controller 与 transition；`removeComponent` 使用 `packageId + componentResourceId` selector。
 - `moveComponent` 使用组件 selector、目标 `toPackageId` 与 `toIndex` 在包之间移动组件。
 
-生命周期操作可与 `attachDisplayNode` / `detachDisplayNode` 组成 transaction batch；其他非生命周期操作仍需单独提交。预检会按整个批次的投影状态校验 selector、插入位置和最终引用，执行阶段在同一份 UAM 工作副本中原子应用。display resource ref 的 `packageId` 省略或为空字符串都表示 owner package；attach 后会规范化为 owner package ID。删除包或组件、以及移动组件仍会拒绝最终状态中的悬空引用或源包依赖：调用方必须在同一批次中显式 detach 或 retarget inbound component node。`writeProjectFromUam()` 会在新工程文件全部写入成功后，清理前一版本不再存在的 `package.xml`、`package_branch.xml`、component XML 和原始资源文件，避免删除或重命名的包在下次 `ProjectReader` reload 时被重新发现。
+生命周期操作可与 `attachDisplayNode` / `detachDisplayNode` 组成 transaction batch；空资源文件夹生命周期也按操作顺序在同一份 UAM 工作副本中原子投影。其他非生命周期操作仍需单独提交。预检会按整个批次的投影状态校验 selector、插入位置和最终引用，执行阶段在同一份 UAM 工作副本中原子应用。display resource ref 的 `packageId` 省略或为空字符串都表示 owner package；attach 后会规范化为 owner package ID。删除包或组件、以及移动组件仍会拒绝最终状态中的悬空引用或源包依赖：调用方必须在同一批次中显式 detach 或 retarget inbound component node。`writeProjectFromUam()` 会在新工程文件全部写入成功后，清理前一版本不再存在的 `package.xml`、`package_branch.xml`、component XML、原始资源文件和空资源目录，避免删除或重命名的项目项在下次 `ProjectReader` reload 时被重新发现；浏览器存储适配器因此必须提供非递归 `rmdir`。
 
 ## 模块边界
 

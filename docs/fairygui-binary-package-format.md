@@ -121,6 +121,8 @@ block 5 的 patch 用于替换 block 4 中相同索引位置的占位字符串�
 | 依赖项 | 每项写 `id` 与 `name` |
 | 条件附加字段 | 分支段先写 `branchCount:int16`，再按顺序写 branch 名列表 |
 
+该 branch 名列表属于当前 package；它的顺序定义 Block 1 中该包所有 `branchItemIds` 的槽位含义。不同 package 可以使用不同的 branch 子集和顺序，不能用工程级 branch 列表替代。
+
 ## Block 1：Package Items
 
 该 block 保存包内条目列表。每个条目至少包含通用头部，再按条目类型追加各自数据段。
@@ -417,7 +419,7 @@ child 自身带独立 index table，不同对象类型的 block 数量不同：
 
 | Block | 内容 |
 |---|---|
-| 0 | beforeAdd：object type、src、pkgId、id、name、xy、size、scale、skew、pivot、alpha、rotation、visible、touchable、grayed、blend、customData |
+| 0 | beforeAdd：object type、src、pkgId、id、name、xy、size、restrict size、scale、skew、pivot、alpha、rotation、visible、touchable、grayed、blend、color filter、customData |
 | 1 | afterAdd 公共段：tooltips、group |
 | 2 | gears |
 | 3 | relations |

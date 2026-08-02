@@ -11,7 +11,10 @@ import {
 
 export type UamLifecycleOperation = Extract<
 	UamTransactionOperation,
-	{ kind: 'addPackage' | 'renamePackage' | 'removePackage' | 'addComponent' | 'removeComponent' | 'moveComponent' }
+	{ kind:
+		| 'addBranch' | 'renameBranch' | 'removeBranch'
+		| 'addPackage' | 'renamePackage' | 'removePackage'
+		| 'addComponent' | 'removeComponent' | 'moveComponent' }
 >;
 
 export type UamDisplayListRewriteOperation = Extract<
@@ -24,8 +27,16 @@ export type UamResourceLifecycleOperation = Extract<
 	{ kind: 'addResource' | 'removeResource' }
 >;
 
+export type UamResourceFolderLifecycleOperation = Extract<
+	UamTransactionOperation,
+	{ kind: 'addResourceFolder' | 'renameResourceFolder' | 'moveResourceFolder' | 'removeResourceFolder' }
+>;
+
 export function isLifecycleOperation(operation: UamTransactionOperation): operation is UamLifecycleOperation {
-	return operation.kind === 'addPackage'
+	return operation.kind === 'addBranch'
+		|| operation.kind === 'renameBranch'
+		|| operation.kind === 'removeBranch'
+		|| operation.kind === 'addPackage'
 		|| operation.kind === 'renamePackage'
 		|| operation.kind === 'removePackage'
 		|| operation.kind === 'addComponent'
@@ -41,16 +52,35 @@ export function isResourceLifecycleOperation(operation: UamTransactionOperation)
 	return operation.kind === 'addResource' || operation.kind === 'removeResource';
 }
 
+export function isResourceFolderLifecycleOperation(
+	operation: UamTransactionOperation,
+): operation is UamResourceFolderLifecycleOperation {
+	return operation.kind === 'addResourceFolder'
+		|| operation.kind === 'renameResourceFolder'
+		|| operation.kind === 'moveResourceFolder'
+		|| operation.kind === 'removeResourceFolder';
+}
+
 export function isUamNativeOperation(operation: UamTransactionOperation): boolean {
-	return operation.kind === 'setComponentProps'
+	return operation.kind === 'updateProjectSettings'
+		|| operation.kind === 'updatePackageSettings'
+		|| operation.kind === 'setComponentProps'
 		|| operation.kind === 'setDisplayNodeProps'
 		|| operation.kind === 'setResourceFavorite'
+		|| operation.kind === 'setResourceFolderFavorite'
+		|| operation.kind === 'setResourceExported'
 		|| operation.kind === 'setImageResourceProps'
+		|| isResourceFolderLifecycleOperation(operation)
 		|| isResourceLifecycleOperation(operation)
 		|| isLifecycleOperation(operation)
 		|| isDisplayListRewriteOperation(operation);
 }
 
+export function renamedResourceFileName(previousFileName: string, requestedName: string): string {
+	if (requestedName.includes('.')) return requestedName;
+	const extensionIndex = previousFileName.lastIndexOf('.');
+	return extensionIndex > 0 ? `${requestedName}${previousFileName.slice(extensionIndex)}` : requestedName;
+}
 
 export const TEXT_DISPLAY_NODE_KINDS = new Set<UamDisplayNode['kind']>(['text', 'richText', 'textInput']);
 

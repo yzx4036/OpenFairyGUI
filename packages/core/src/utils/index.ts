@@ -14,14 +14,18 @@ export {
 	ensureArray,
 } from './xml-utils.js';
 export {
-	maxRectsPack,
-	type PackInput,
-	type PackResult,
-	type PackerOptions,
-} from './max-rects.js';
-export {
+	applyDerivedMovieClipModel,
+	deriveMovieClipModel,
+	deriveMovieClipModelFromJta,
 	parseJta,
+	type DerivedMovieClipFrame,
+	type DerivedMovieClipModel,
 	type JtaDef,
 	type JtaFrame,
 	type JtaTexture,
 } from './jta-parser.js';
+export {
+	probeRasterImage,
+	type RasterImageFormat,
+	type RasterImageInfo,
+} from './image-info.js';

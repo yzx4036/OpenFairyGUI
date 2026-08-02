@@ -1,17 +1,20 @@
 import type {
 	UamAssetResource,
 	UamComponentInstanceProperties,
+	UamComponentPropertyOverride,
 	UamComponentProperties,
 	UamControllerAction,
 	UamControllerModel,
 	UamDisplayNode,
 	UamGearBinding,
 	UamImageResourceProperties,
+	UamMovieClipResourceProperties,
 	UamPlainTextProperties,
 	UamProject,
 	UamTextProperties,
 	UamValidationIssue,
 } from './model.js';
+import { normalizeResourceFolderPath, resourceFolderParentPath } from '../utils/resource-folder.js';
 
 function pushIssue(issues: UamValidationIssue[], path: string, message: string): void {
 	issues.push({ path, message });
@@ -45,6 +48,18 @@ function isFiniteUamEdgeInsets(value: unknown): boolean {
 function hasExactKeys(value: object, keys: readonly string[]): boolean {
 	const actual = Object.keys(value);
 	return actual.length === keys.length && actual.every((key) => keys.includes(key));
+}
+
+export function isValidUamComponentPropertyOverride(
+	value: unknown,
+): value is UamComponentPropertyOverride {
+	if (!value || typeof value !== 'object' || !hasExactKeys(value, ['target', 'propertyId', 'value'])) return false;
+	const property = value as UamComponentPropertyOverride;
+	return typeof property.target === 'string'
+		&& property.target.length > 0
+		&& Number.isSafeInteger(property.propertyId)
+		&& property.propertyId >= 0
+		&& typeof property.value === 'string';
 }
 
 const IMAGE_RESOURCE_PROPERTY_KEYS = [
@@ -88,13 +103,53 @@ export function isValidUamImageResourceProperties(
 	return x >= 0 && y >= 0 && width > 0 && height > 0;
 }
 
+const MOVIE_CLIP_RESOURCE_PROPERTY_KEYS = [
+	'interval',
+	'repeatDelay',
+	'swing',
+	'smoothing',
+	'frames',
+] as const satisfies readonly (keyof UamMovieClipResourceProperties)[];
+
+const MOVIE_CLIP_FRAME_KEYS = [
+	'rectX',
+	'rectY',
+	'rectWidth',
+	'rectHeight',
+	'addDelay',
+	'spriteId',
+] as const satisfies readonly (keyof UamMovieClipResourceProperties['frames'][number])[];
+
+export function isValidUamMovieClipResourceProperties(
+	value: unknown,
+): value is UamMovieClipResourceProperties {
+	if (typeof value !== 'object' || value === null || !hasExactKeys(value, MOVIE_CLIP_RESOURCE_PROPERTY_KEYS)) return false;
+	const properties = value as UamMovieClipResourceProperties;
+	if (!Number.isInteger(properties.interval) || properties.interval < 0
+		|| !Number.isInteger(properties.repeatDelay) || properties.repeatDelay < 0
+		|| typeof properties.swing !== 'boolean'
+		|| typeof properties.smoothing !== 'boolean'
+		|| !Array.isArray(properties.frames)
+	) {
+		return false;
+	}
+	return properties.frames.every((frame) => (
+		typeof frame === 'object'
+		&& frame !== null
+		&& hasExactKeys(frame, MOVIE_CLIP_FRAME_KEYS)
+		&& [frame.rectX, frame.rectY, frame.rectWidth, frame.rectHeight, frame.addDelay].every(Number.isInteger)
+		&& frame.rectWidth >= 0
+		&& frame.rectHeight >= 0
+		&& frame.addDelay >= 0
+		&& typeof frame.spriteId === 'string'
+	));
+}
+
 const TEXT_PROPERTY_KEYS = [
 	'text',
 	'font',
 	'fontSize',
 	'color',
-	'minSize',
-	'maxSize',
 	'align',
 	'vAlign',
 	'leading',
@@ -138,8 +193,6 @@ export function isValidUamTextProperties(
 		&& Number.isInteger(properties.fontSize)
 		&& properties.fontSize > 0
 		&& isTextColor(properties.color)
-		&& isFiniteUamSize(properties.minSize)
-		&& isFiniteUamSize(properties.maxSize)
 		&& Number.isInteger(properties.align)
 		&& properties.align >= 0
 		&& properties.align <= 2
@@ -191,8 +244,6 @@ function textPropertiesFromNode(
 		font: node.font,
 		fontSize: node.fontSize,
 		color: node.color,
-		minSize: node.minSize,
-		maxSize: node.maxSize,
 		align: node.align,
 		vAlign: node.vAlign,
 		leading: node.leading,
@@ -262,6 +313,7 @@ const COMPONENT_PROPERTY_KEYS = [
 	'wholeNumbers',
 	'changeOnClick',
 	'fixedGripSize',
+	'autoClearItems',
 	'customProperties',
 ] as const satisfies readonly (keyof UamComponentProperties)[];
 
@@ -293,6 +345,7 @@ export function isValidUamComponentProperties(value: unknown): value is UamCompo
 		properties.wholeNumbers,
 		properties.changeOnClick,
 		properties.fixedGripSize,
+		properties.autoClearItems,
 	];
 	const numbers = [
 		properties.overflow,
@@ -361,11 +414,12 @@ export function isValidUamComponentInstanceProperties(
 				&& finite(properties.titleFontSize);
 		case 'ComboBox':
 			return hasExactKeys(properties, [
-				'extensionType', 'title', 'icon', 'visibleItemCount', 'selectionController', 'items',
+				'extensionType', 'title', 'icon', 'visibleItemCount', 'selectionController', 'autoClearItems', 'items',
 			])
 				&& [properties.title, properties.icon, properties.selectionController]
 					.every((item) => typeof item === 'string')
 				&& finite(properties.visibleItemCount)
+				&& typeof properties.autoClearItems === 'boolean'
 				&& Array.isArray(properties.items)
 				&& properties.items.every((item) => (
 					item
@@ -439,7 +493,13 @@ function validateGearBinding(
 }
 
 function isSafePathSegment(value: string): boolean {
-	return value.length > 0 && value !== '.' && value !== '..' && !/[\\/:]/.test(value);
+	return value.length > 0
+		&& value.trim() === value
+		&& value !== '.'
+		&& value !== '..'
+		&& !/[\\/:]/.test(value)
+		&& !/[. ]$/.test(value)
+		&& !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(value);
 }
 
 function normalizedResourceTarget(path: string, fileName: string): string | null {
@@ -467,6 +527,41 @@ function validatePackageOutputTargets(
 		pushIssue(issues, `${pkgPath}.name`, `Invalid package output name "${pkg.name}".`);
 	}
 	const outputs = new Map<string, string>();
+	const folderKeys = new Set<string>();
+	for (const [folderIndex, folder] of pkg.folders.entries()) {
+		const folderPath = `${pkgPath}.folders[${folderIndex}]`;
+		if (folder.branch && !isSafePathSegment(folder.branch)) {
+			pushIssue(issues, `${folderPath}.branch`, `Invalid package branch name "${folder.branch}".`);
+		}
+		const normalizedPath = normalizeResourceFolderPath(folder.path);
+		if (folder.path === '/' || folder.path !== normalizedPath || !folder.path.split('/').filter(Boolean).every(isSafePathSegment)) {
+			pushIssue(issues, `${folderPath}.path`, 'Resource folder path must be canonical, non-root, and traversal-free.');
+			continue;
+		}
+		if (typeof folder.favorite !== 'boolean') {
+			pushIssue(issues, `${folderPath}.favorite`, 'Resource folder favorite must be boolean.');
+		}
+		if (typeof folder.atlas !== 'string') {
+			pushIssue(issues, `${folderPath}.atlas`, 'Resource folder atlas must be a string.');
+		}
+		const key = `${folder.branch}\0${folder.path}`;
+		if (folderKeys.has(key)) {
+			pushIssue(issues, `${folderPath}.path`, `Duplicate resource folder path "${folder.path}".`);
+		}
+		folderKeys.add(key);
+		const parentPath = resourceFolderParentPath(folder.path);
+		if (parentPath !== '/' && !folderKeys.has(`${folder.branch}\0${parentPath}`)
+			&& !pkg.folders.some((candidate) => candidate.branch === folder.branch && candidate.path === parentPath)
+		) {
+			pushIssue(issues, `${folderPath}.path`, `Parent resource folder "${parentPath}" does not exist.`);
+		}
+		const target = folder.path.replace(/^\/+|\/+$/g, '');
+		const descriptor = folder.branch ? 'package_branch.xml' : 'package.xml';
+		if (target === descriptor) {
+			pushIssue(issues, `${folderPath}.path`, `Resource folder output "${target}" conflicts with the package descriptor.`);
+		}
+		outputs.set(`${folder.branch}\0${target}`, folderPath);
+	}
 	for (const [resourceIndex, resource] of pkg.resources.entries()) {
 		const resourcePath = `${pkgPath}.resources[${resourceIndex}]`;
 		if (resource.branch && !isSafePathSegment(resource.branch)) {
@@ -503,6 +598,52 @@ function validateDisplayNode(
 	path: string,
 	issues: UamValidationIssue[],
 ): void {
+	if (!isFiniteUamPoint(node.position)) pushIssue(issues, `${path}.position`, 'Display node position must contain finite x and y numbers.');
+	if (!isFiniteUamSize(node.size) || node.size.width < 0 || node.size.height < 0) {
+		pushIssue(issues, `${path}.size`, 'Display node size must contain finite non-negative width and height values.');
+	}
+	if (typeof node.locked !== 'boolean') pushIssue(issues, `${path}.locked`, 'Display node locked must be boolean.');
+	if (typeof node.aspect !== 'boolean') pushIssue(issues, `${path}.aspect`, 'Display node aspect must be boolean.');
+	for (const [key, value] of [['minSize', node.minSize], ['maxSize', node.maxSize]] as const) {
+		if (!isFiniteUamSize(value) || value.width < 0 || value.height < 0) {
+			pushIssue(issues, `${path}.${key}`, `Display node ${key} must contain finite non-negative width and height values.`);
+		}
+	}
+	if (isFiniteUamSize(node.minSize) && isFiniteUamSize(node.maxSize)) {
+		if (node.maxSize.width > 0 && node.maxSize.width < node.minSize.width) {
+			pushIssue(issues, `${path}.maxSize.width`, 'Display node maxSize.width must be zero or at least minSize.width.');
+		}
+		if (node.maxSize.height > 0 && node.maxSize.height < node.minSize.height) {
+			pushIssue(issues, `${path}.maxSize.height`, 'Display node maxSize.height must be zero or at least minSize.height.');
+		}
+	}
+	if (!isFiniteUamPoint(node.scale)) pushIssue(issues, `${path}.scale`, 'Display node scale must contain finite x and y numbers.');
+	if (!isFiniteUamPoint(node.skew)) pushIssue(issues, `${path}.skew`, 'Display node skew must contain finite x and y numbers.');
+	if (![node.visible, node.touchable, node.grayed].every((value) => typeof value === 'boolean')) {
+		pushIssue(issues, path, 'Display node visible, touchable, and grayed must be boolean.');
+	}
+	if (typeof node.alpha !== 'number' || !Number.isFinite(node.alpha) || node.alpha < 0 || node.alpha > 1) {
+		pushIssue(issues, `${path}.alpha`, 'Display node alpha must be a finite number between 0 and 1.');
+	}
+	if (typeof node.rotation !== 'number' || !Number.isFinite(node.rotation)) {
+		pushIssue(issues, `${path}.rotation`, 'Display node rotation must be finite.');
+	}
+	if (![node.tooltips, node.filter, node.filterData, node.customData].every((value) => typeof value === 'string')) {
+		pushIssue(issues, path, 'Display node tooltips, filter, filterData, and customData must be strings.');
+	}
+	if (!['normal', 'none', 'add', 'multiply', 'screen', 'erase'].includes(node.blendMode)) {
+		pushIssue(issues, `${path}.blendMode`, `Unsupported display node blendMode "${node.blendMode}".`);
+	}
+	if (node.filter !== '' && node.filter !== 'color') {
+		pushIssue(issues, `${path}.filter`, `Unsupported display node filter "${node.filter}".`);
+	} else if (node.filter === 'color') {
+		const values = node.filterData.split(',').map((part) => Number(part.trim()));
+		if (values.length !== 4 || values.some((value) => !Number.isFinite(value))) {
+			pushIssue(issues, `${path}.filterData`, 'Color filterData must contain four finite comma-separated numbers.');
+		}
+	} else if (node.filterData !== '') {
+		pushIssue(issues, `${path}.filterData`, 'filterData must be empty when filter is empty.');
+	}
 	if (node.pivot !== undefined) {
 		if (!isFiniteUamPoint(node.pivot)) {
 			pushIssue(issues, `${path}.pivot`, 'Display node pivot must contain finite x and y numbers.');
@@ -511,6 +652,23 @@ function validateDisplayNode(
 	if (node.pivotAsAnchor !== undefined) {
 		if (typeof node.pivotAsAnchor !== 'boolean') {
 			pushIssue(issues, `${path}.pivotAsAnchor`, 'Display node pivotAsAnchor must be boolean.');
+		}
+	}
+	if (node.kind === 'component'
+		&& node.propertyOverrides !== undefined
+		&& (!Array.isArray(node.propertyOverrides)
+			|| !node.propertyOverrides.every(isValidUamComponentPropertyOverride))
+	) {
+		pushIssue(issues, `${path}.propertyOverrides`, 'Component property overrides must contain a non-empty target, a non-negative integer propertyId, and a string value.');
+	}
+	if (node.kind === 'list' || node.kind === 'tree') {
+		for (const [itemIndex, item] of node.listItems.entries()) {
+			if (item.propertyOverrides !== undefined
+				&& (!Array.isArray(item.propertyOverrides)
+					|| !item.propertyOverrides.every(isValidUamComponentPropertyOverride))
+			) {
+				pushIssue(issues, `${path}.listItems[${itemIndex}].propertyOverrides`, 'List item property overrides must contain a non-empty target, a non-negative integer propertyId, and a string value.');
+			}
 		}
 	}
 	if (
@@ -544,6 +702,17 @@ export function validateUamProject(project: UamProject): UamValidationIssue[] {
 	const issues: UamValidationIssue[] = [];
 	const packageIds = new Set<string>();
 	const packageNames = new Set<string>();
+	const declaredProjectBranches = Array.isArray(project.branches) ? project.branches : [];
+	if (!Array.isArray(project.branches)) pushIssue(issues, 'branches', 'Project branches must be an array.');
+	const projectBranchNames = new Set<string>();
+	for (const [branchIndex, branchName] of declaredProjectBranches.entries()) {
+		if (!isSafePathSegment(branchName)) pushIssue(issues, `branches[${branchIndex}]`, `Invalid branch name "${branchName}".`);
+		if (projectBranchNames.has(branchName)) pushIssue(issues, `branches[${branchIndex}]`, `Duplicate branch name "${branchName}".`);
+		if (branchIndex > 0 && declaredProjectBranches[branchIndex - 1]!.localeCompare(branchName) > 0) {
+			pushIssue(issues, `branches[${branchIndex}]`, 'Project branches must use canonical lexical order.');
+		}
+		projectBranchNames.add(branchName);
+	}
 
 	for (const [pkgIndex, pkg] of project.packages.entries()) {
 		const pkgPath = `packages[${pkgIndex}]`;
@@ -552,17 +721,45 @@ export function validateUamProject(project: UamProject): UamValidationIssue[] {
 		packageIds.add(pkg.id);
 		packageNames.add(pkg.name);
 		validatePackageOutputTargets(pkg, pkgPath, issues);
+		const declaredBranchNames = Array.isArray(pkg.branchNames) ? pkg.branchNames : [];
+		if (!Array.isArray(pkg.branchNames)) {
+			pushIssue(issues, `${pkgPath}.branchNames`, 'Package branchNames must be an array.');
+		}
+		const packageBranchNames = new Set<string>();
+		for (const [branchIndex, branchName] of declaredBranchNames.entries()) {
+			if (!branchName || !projectBranchNames.has(branchName)) {
+				pushIssue(issues, `${pkgPath}.branchNames[${branchIndex}]`, `Unknown package branch "${branchName}".`);
+			}
+			if (packageBranchNames.has(branchName)) {
+				pushIssue(issues, `${pkgPath}.branchNames[${branchIndex}]`, `Duplicate package branch "${branchName}".`);
+			}
+			packageBranchNames.add(branchName);
+		}
 
 		const resourceIds = new Set<string>();
 		for (const [resourceIndex, resource] of pkg.resources.entries()) {
 			const resourcePath = `${pkgPath}.resources[${resourceIndex}]`;
 			if (resourceIds.has(resource.id)) pushIssue(issues, `${resourcePath}.id`, `Duplicate resource id "${resource.id}".`);
 			resourceIds.add(resource.id);
+			if (resource.branch && !packageBranchNames.has(resource.branch)) {
+				pushIssue(issues, `${resourcePath}.branch`, `Unknown package branch "${resource.branch}".`);
+			}
+			if (resource.branchItemIds.length > declaredBranchNames.length) {
+				pushIssue(issues, `${resourcePath}.branchItemIds`, 'Branch item ids exceed the package branch table.');
+			}
 			if (typeof resource.favorite !== 'boolean') {
 				pushIssue(issues, `${resourcePath}.favorite`, 'Resource favorite must be boolean.');
 			}
 			if (resource.kind === 'image' && !isValidUamImageResourceProperties(resource.image)) {
 				pushIssue(issues, `${resourcePath}.image`, 'Image resource properties must be a complete valid property snapshot.');
+			}
+			if (resource.kind === 'movieClip') {
+				if (!isFiniteUamSize(resource.dimensions) || resource.dimensions.width < 0 || resource.dimensions.height < 0) {
+					pushIssue(issues, `${resourcePath}.dimensions`, 'MovieClip dimensions must contain finite non-negative width and height values.');
+				}
+				if (!isValidUamMovieClipResourceProperties(resource.movieClip)) {
+					pushIssue(issues, `${resourcePath}.movieClip`, 'MovieClip properties must be a complete valid property snapshot.');
+				}
 			}
 
 			if (resource.kind !== 'component') continue;

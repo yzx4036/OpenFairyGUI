@@ -1,7 +1,8 @@
 import type { Command } from 'commander';
 import { NodeIO } from '@openfairygui/core/node';
 import { resolvePublishOptions } from '@openfairygui/functions';
-import { publishNode } from '@openfairygui/functions/node';
+import { publishNode, loadPlugins } from '@openfairygui/functions/node';
+import type { LoadedPlugin } from '@openfairygui/functions';
 import path from 'node:path';
 import { resolveFairyPath } from '../utils/project-input.js';
 import { parseProjectType } from '../utils/project-type.js';
@@ -12,6 +13,7 @@ type PublishCommandOptions = {
 	packages?: string;
 	branch?: string;
 	projectType?: string;
+	plugin?: string | string[];
 };
 
 export function registerPublishCommand(program: Command): void {
@@ -26,6 +28,11 @@ export function registerPublishCommand(program: Command): void {
 		.option(
 			'-t, --project-type <name|id>',
 			'Override project type (for example: unity, layabox, cocoscreator, 0, 4, 3)',
+		)
+		.option(
+			'--plugin <path>',
+			'Load publish plugin(s) from a directory. Repeat for multiple dirs.',
+			(val: string, prev: string[]) => (prev ?? []).concat(val),
 		)
 		.action(async (projectDir: string, options: PublishCommandOptions) => {
 			const fairyPath = await resolveFairyPath(projectDir);
@@ -51,6 +58,26 @@ export function registerPublishCommand(program: Command): void {
 				console.log(`Active branch: ${options.branch}`);
 			}
 
+			// ── Plugin loading ──
+			let plugins: LoadedPlugin[] | undefined;
+			if (options.plugin) {
+				const pluginDirs = Array.isArray(options.plugin) ? options.plugin : [options.plugin];
+				plugins = [];
+				for (const pluginDir of pluginDirs) {
+					const resolvedDir = path.resolve(pluginDir);
+					console.log(`Loading plugins from: ${resolvedDir}`);
+					const loaded = await loadPlugins(doc, resolvedDir);
+					if (loaded.length === 0) {
+						console.warn(`  No plugins found in ${resolvedDir}`);
+					} else {
+						for (const p of loaded) {
+							console.log(`  ✓ ${p.name}`);
+						}
+					}
+					plugins.push(...loaded);
+				}
+			}
+
 			await publishNode({
 				document: doc,
 				output: outputDir,
@@ -60,6 +87,7 @@ export function registerPublishCommand(program: Command): void {
 				assetsPath: path.join(projectRootDir, 'assets'),
 				atlas: resolved.atlas,
 				branch: options.branch,
+				plugins: plugins,
 			});
 
 			console.log(`\nDone!${outputDir ? ` Output override: ${outputDir}` : ''}`);

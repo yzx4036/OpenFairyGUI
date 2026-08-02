@@ -2,6 +2,7 @@ export {
 	publishNode,
 	type PublishNodeOptions,
 } from './adapters/node/publish.js';
+export { loadPlugins } from './adapters/node/plugins.js';
 export {
 	restoreNode,
 	type RestoreNodeOptions,

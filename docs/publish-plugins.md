@@ -29,6 +29,20 @@ MyProject/
 但传入的 `assetsPath` 可定位到工程根目录，则按该根目录查找；两者都不可用时不加载插件，
 发布流程继续执行。
 
+### CLI 加载外部插件目录
+
+CLI 额外支持 `--plugin <dir>` 参数，显式加载工程目录之外的插件目录：
+
+```bash
+node packages/cli/dist/cli.mjs publish "FGUIProject/" \
+  --output "Assets/Bundles/FUI/" \
+  --project-type unity \
+  --plugin "E:/_Proj/OpenFairyGUI/plugins/"
+```
+
+`--plugin` 指向的目录下所有符合插件 manifest 的子目录都会被加载，与工程内 `plugins/`
+自动发现合并生效。适合把通用插件（如代码生成插件）放在共享仓库，而不是复制进每个 FGUI 工程。
+
 ## Manifest
 
 每个 OpenFairyGUI publish 插件必须放在独立子目录中，并提供 `package.json`：

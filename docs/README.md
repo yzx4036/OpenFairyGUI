@@ -13,6 +13,7 @@
 | [Project XML 属性协议](./project-xml-attribute-reference.md) | 汇总 `package.xml`、`component.xml` 及结构节点当前正式支持的 XML 属性协议 |
 | [Project XML DisplayList Tag 对齐](./project-xml-displaylist-variants.md) | 固定 `component.xml` `displayList` 的原始 XML tag、容器 variant 与 editor `DisplayListItem.type` 对齐口径 |
 | [二进制封包协议](./fairygui-binary-package-format.md) | 说明 `.fui` / `_fui.bytes` 的协议布局、block 结构与 Component 解码规则 |
+| [分支增强记录](./CHANGELOG.md) | 蒸馏本 fork 相对上游的修改记录（发布路径规则、CLI --plugin、代码生成插件等） |
 | [网站首页](./index.md) | 面向使用者的入门、包导航、参考文档与 API 入口 |
 
 ## 使用约定

@@ -195,6 +195,11 @@ export function publish(options: PublishOptions): Transform {
 			}
 			const publishName = pkg.getPublishName() || pkg.getName();
 
+			// Unity (bytes) format: nest inside {PkgName}/ subfolder.
+			if (outputDir && config.fileExtension === 'bytes') {
+				outputDir = `${outputDir}/${publishName}`;
+			}
+
 			return {
 				pkg,
 				outputDir,

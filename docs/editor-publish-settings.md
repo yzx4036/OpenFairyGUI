@@ -165,6 +165,26 @@ ProjectWriter 会为每个工程分支保留 `assets_<branch>/`，并为包内�
 
 选中的相对路径以工程根目录为基准；若以上都未配置，发布不会隐式选择输出目录。
 
+### Unity（bytes）输出路径 — 按包分子文件夹
+
+Unity 项目固定使用 `bytes` 扩展名时，解析出的输出目录会自动追加 `/{PublishName}/` 子文件夹。最终产物布局为：
+
+```text
+<输出目录>/
+  Common/
+    Common_fui.bytes
+    Common_atlas0.png
+  Pkg_MarbleUI/
+    Pkg_MarbleUI_fui.bytes
+  ...
+```
+
+规则要点：
+
+- 每个包的全部发布资源（`_fui.bytes` 与图集 PNG）统一落在 `{outputDir}/{PublishName}/` 下，`PublishName` 取包级发布名，未设置时回退为包名。
+- 该规则只作用于 `fileExtension === 'bytes'`（Unity 固定格式）；`.fui` 等其他扩展名仍输出到解析目录的扁平位置。
+- 实现位置：`packages/functions/src/publish.ts` → `resolvePackagePublishPlan()`，在路径解析完成后追加子文件夹。
+
 浏览器 Laya 发布在显式 `output` 下不会使用工程或包内的桌面输出路径；显式 `branch`、`packages`、`compressed` 与 `atlas` 也保持调用参数优先。未显式覆盖时，持久化的压缩、图集和安全文件扩展名设置直接驱动输出。当前浏览器宿主不提供代码生成；全局允许且任一选中包启用 `genCode` 时，发布会在 Canvas 检查和文件写入前以 `unsupported_publish_setting`（含 `setting` 与 `path`）拒绝。失败结果的 `files` 只包含已经完成 `writeFileRaw` 的文件，因此 `success=false` 且列表非空表示内置输出已部分写入；需要原子发布的宿主必须提供事务式或 staging 输出文件系统。
 
 ## 当前发布完整性要求

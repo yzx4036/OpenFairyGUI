@@ -13,7 +13,7 @@ It owns:
 - coordinated but non-atomic save semantics
 - browser-safe project sessions
 - browser-safe async project storage adapter
-- adapter-backed file sessions and backend-local advisory locking
+- adapter-backed file sessions and backend-local session locking
 - capability discovery
 - transport-neutral bootstrap
 
@@ -35,13 +35,20 @@ It also does **not** implement MCP or any transport-specific wire protocol.
 The root `@openfairygui/backend` entrypoint is browser-safe: pure authoring sessions can run in memory,
 and browser editors can inject an async storage adapter for OPFS, IndexedDB, ZIP-backed virtual filesystems,
 or File System Access API bridges. Storage adapters must implement `unlink()` so resource rename/move/remove
-can clean up stale source files. The default Node filesystem/runtime lives under `@openfairygui/backend/node`.
-File-backed `openSession` hydrates primary resource bytes so browser-safe transactions can rename/move
+can clean up stale source files. Existing browser projects use a session-lifetime Web Lock: a live peer tab
+receives `lock_conflict`, while reload or abrupt document termination releases ownership without leaving a
+persistent `.openfairygui.backend.lock` marker. When Web Locks are unavailable, the storage adapter must
+provide `acquireSessionLock()` with the same atomic cross-context and owner-termination semantics. The default
+Node filesystem/runtime lives under `@openfairygui/backend/node` and retains its advisory lock file behavior.
+Adapter-backed `openSession` hydrates primary resource bytes so browser-safe transactions can rename/move
 assets or add/replace/remove binary resources. `saveSession` writes replacement bytes before it removes
 stale source files, preserving the prior file when a write fails.
 It also compares the source project with a UAM round trip through `ProjectWriter`; sessions with
 unrepresented persisted properties expose `uamFidelity: 'unsupported'`, and write attempts fail with
-`uam_fidelity_unsupported`. Transactions, saves, and materialization are serialized per session.
+`uam_fidelity_unsupported`. Existing projects in browser storage must be opened through this path by
+injecting `createBackendStorageFileSystem(storage)` into `BackendRuntime`; `openProjectSession` is only
+for sessions whose supplied UAM project is authoritative. Transactions, saves, and materialization are
+serialized per session.
 
 ## Relationship to other packages
 
@@ -51,7 +58,7 @@ unrepresented persisted properties expose `uamFidelity: 'unsupported'`, and writ
 
 ## Example
 
-Browser-safe project session:
+Browser-safe authoritative UAM project session:
 
 ```ts
 import { BackendRuntime } from '@openfairygui/backend';
@@ -67,7 +74,7 @@ const applied = await runtime.applyTransaction({
 });
 ```
 
-Browser-safe project session with injected storage:
+Open an existing project from browser async storage with source-fidelity checks:
 
 ```ts
 import { BackendRuntime, createBackendStorageFileSystem } from '@openfairygui/backend';
@@ -81,15 +88,21 @@ const fileSystem = createBackendStorageFileSystem({
 	async readdir(dirPath) { return storage.readdir(dirPath); },
 	async exists(filePath) { return storage.exists(filePath); },
 	async unlink(filePath) { await storage.remove(filePath); },
+	async rmdir(dirPath) { await storage.rmdir(dirPath); },
 });
 
+const runtime = new BackendRuntime({ fileSystem });
+const opened = await runtime.openSession({ projectPath: 'ExistingProject' });
+if (!opened.ok) throw new Error(opened.error.message);
+```
+
+Materialize an authoritative UAM project into browser async storage:
+
+```ts
 const runtime = new BackendRuntime();
 const opened = runtime.openProjectSession({
 	project: uamProject,
-	storage: {
-		fileSystem,
-		fairyPath: 'Project.fairy',
-	},
+	storage: { fileSystem, fairyPath: 'NewProject/Project.fairy' },
 });
 if (!opened.ok) throw new Error(opened.error.message);
 

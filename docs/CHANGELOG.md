@@ -3,6 +3,17 @@
 > 本文档蒸馏本 fork（`yzx4036/OpenFairyGUI`，develop 分支）相对上游的修改记录。
 > 每次合并上游、新增分支特性时追加；只记录行为差异，不重复上游 release notes。
 
+## ⚖️ 上游合并铁律（最高优先）
+
+> 合并上游（`upstream-release` → `test-merge`/`develop`）时，**必须优先保证本仓库新增的功能和修改项（本仓库自己的需求）**。合并上游只是锦上添花的更新。
+
+1. **本地优先**：任何冲突，默认以本仓库的实现为准——本仓库的功能、设计、优化领先时，直接弃掉对应的上游修改。
+2. **审计比较**：冲突时先审计上游的修改是否比本仓库优秀或实现更好：
+   - 本仓库的设计和优化领先 → 弃掉这部分上游的修改；
+   - 上游更好 → 把上游的设计和新功能合并进来。
+3. **验证门槛**：合并后必须跑 `pnpm run build` + `pnpm run lint` + `pnpm run test`，确认本仓库功能完好、无新增回归（与合并前基线对比失败集）。
+4. **记录**：每次合并完成，在本文件追加一条合并记录（上游基线 commit、冲突文件、取舍决策）。
+
 ## 2026-08-04 — v0.2.0-alpha.37 分支增强
 
 ### [feat] publish(bytes): 产物输出到 {outputDir}/{PkgName}/ 子文件夹
@@ -38,6 +49,16 @@
 
 - `c959f5e` Merge upstream-release → develop（含 v0.2.0-alpha.37 及之前的全部上游提交）。
 - fork 已含 `#86 preserve override whitespace`、`#85 XML overrides + SVG`、`#79/#78/#77/#76/#75` 等上游修复。
+
+## 2026-08-07 — merge upstream-release → test-merge（v0.2.0-alpha.37 → v0.2.5）
+
+- **上游基线**: `51c7a18`（含 v0.2.0→v0.2.5、UAM 元数据完善、英文文档、layabox 修复、folder-atlas 事务、browser session lock 等 45 个提交）
+- **冲突文件**: `packages/cli/src/commands/publish.ts`（仅 import 区）
+- **取舍决策**:
+  - 保留本仓库 `loadPlugins`/`LoadedPlugin`/`--plugin` 插件加载功能（上游无此功能）；
+  - 合并上游 `import type { Command }` 位置调整（编译必需，非功能差异）；
+  - 上游 `codegen.ts` 的 `Required<CliCodeGenerationSettings>` 类型强化 + `plugins.ts` 的 `PluginManifest` 类型重构 → 自动合并成功，保留（纯类型改进，与本地 loadPlugins 兼容）。
+- **验证**: `pnpm run build` ✅（et-fui-codegen 插件需 `NODE_OPTIONS=--max-old-space-size=16384`，pre-existing）；`pnpm run lint` ✅；`pnpm run test` 失败集与 merge 前基线完全一致（11 个，均为本地 bytes 子文件夹功能导致的测试断言未同步，非本次 merge 引入）。
 
 ---
 

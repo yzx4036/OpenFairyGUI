@@ -3,17 +3,19 @@ import { ControllerActionType, TransitionActionType } from '../constants.js';
 import type { Component } from '../properties/component.js';
 import type { Controller } from '../properties/controller.js';
 import type { Transition } from '../properties/transition.js';
-import type { FileSystem } from './file-system.js';
 import {
 	EXTENSION_PROTOCOL_MAP,
 	formatButtonDownEffectValue,
 	formatButtonMode,
 	formatInsets,
+	formatProjectInt32,
+	formatProjectInt32List,
 	formatTitleType,
 	getProtocolChildName,
 	hasNonZeroInsets,
 	serializeDisplayList,
 } from './display-object-xml-writer.js';
+import type { FileSystem } from './file-system.js';
 import { PROJECT_XML_PROTOCOL, writeXmlAttr } from './project-xml-protocol.js';
 
 const builder = new XMLBuilder({
@@ -139,6 +141,8 @@ type WritableComponent = Component & {
 	getFooterRes?(): string;
 	getBgColor?(): string;
 	getBgColorEnabled?(): boolean;
+	getDesignImage?(): string;
+	getDesignImageForTest?(): boolean;
 	getDesignImageAlpha?(): number;
 	getDesignImageLayer?(): number;
 	getDesignImageOffsetX?(): number;
@@ -146,6 +150,9 @@ type WritableComponent = Component & {
 	getIdNum?(): number;
 	getInitName?(): string;
 	getRemark?(): string;
+	getPageController?(): string;
+	getAddedToStageSound?(): string;
+	getRemovedFromStageSound?(): string;
 	getExtensionType?(): string;
 	getButtonMode?(): number;
 	getSound?(): string;
@@ -188,7 +195,7 @@ export async function writeComponent(
 
 		const compAttrs: Record<string, unknown> = {};
 		const [w, h] = [typedComp.getWidth?.() ?? 0, typedComp.getHeight?.() ?? 0];
-		if (w || h) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.size, `${w},${h}`);
+		if (w || h) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.size, formatProjectInt32List([w, h], 'component size'));
 		const [pivotX, pivotY] = [typedComp.getPivotX?.() ?? 0, typedComp.getPivotY?.() ?? 0];
 		if (pivotX !== 0 || pivotY !== 0) {
 			writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.pivot, `${pivotX},${pivotY}`);
@@ -200,7 +207,7 @@ export async function writeComponent(
 			writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.overflow, overflowName[overflow] ?? 'visible');
 		}
 		const margin = typedComp.getMargin?.();
-		if (hasNonZeroInsets(margin)) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.margin, formatInsets(margin!));
+		if (hasNonZeroInsets(margin)) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.margin, formatInsets(margin!, 'component margin'));
 		const restrictSize = [
 			typedComp.getMinWidth?.() ?? 0,
 			typedComp.getMaxWidth?.() ?? 0,
@@ -208,28 +215,40 @@ export async function writeComponent(
 			typedComp.getMaxHeight?.() ?? 0,
 		];
 		if (restrictSize.some((value) => value !== 0)) {
-			writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.restrictSize, restrictSize.join(','));
+			writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.restrictSize, formatProjectInt32List(restrictSize, 'component restrictSize'));
 		}
 		if (typedComp.getBgColorEnabled?.()) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.bgColorEnabled, 'true');
 		const bgColor = typedComp.getBgColor?.();
 		if (bgColor) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.bgColor, bgColor);
-		const designImageAlpha = typedComp.getDesignImageAlpha?.() ?? 0;
-		if (designImageAlpha !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageAlpha, String(designImageAlpha));
+		const designImage = typedComp.getDesignImage?.();
+		if (designImage) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImage, designImage);
+		if (typedComp.getDesignImageForTest?.()) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageForTest, 'true');
+		const designImageAlpha = typedComp.getDesignImageAlpha?.() ?? 50;
+		if (designImageAlpha !== 50) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageAlpha, String(designImageAlpha));
 		const designImageLayer = typedComp.getDesignImageLayer?.() ?? 0;
 		if (designImageLayer !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageLayer, String(designImageLayer));
 		const designImageOffsetX = typedComp.getDesignImageOffsetX?.() ?? 0;
-		if (designImageOffsetX !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageOffsetX, String(designImageOffsetX));
+		if (designImageOffsetX !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageOffsetX, formatProjectInt32(designImageOffsetX, 'designImageOffsetX'));
 		const designImageOffsetY = typedComp.getDesignImageOffsetY?.() ?? 0;
-		if (designImageOffsetY !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageOffsetY, String(designImageOffsetY));
+		if (designImageOffsetY !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageOffsetY, formatProjectInt32(designImageOffsetY, 'designImageOffsetY'));
 		const idNum = typedComp.getIdNum?.() ?? 0;
 		if (idNum !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.idnum, String(idNum));
 		const initName = typedComp.getInitName?.();
 		if (initName) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.initName, initName);
 		const remark = typedComp.getRemark?.();
 		if (remark) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.remark, remark);
+		const pageController = typedComp.getPageController?.();
+		if (pageController) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.pageController, pageController);
+		const showSound = typedComp.getAddedToStageSound?.();
+		if (showSound) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.showSound, showSound);
+		const hideSound = typedComp.getRemovedFromStageSound?.();
+		if (hideSound) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.hideSound, hideSound);
 		const clipSoftness = typedComp.getClipSoftness?.();
 		if (clipSoftness && ((clipSoftness.x ?? 0) !== 0 || (clipSoftness.y ?? 0) !== 0)) {
-			writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.clipSoftness, `${clipSoftness.x ?? 0},${clipSoftness.y ?? 0}`);
+			writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.clipSoftness, formatProjectInt32List([
+				clipSoftness.x ?? 0,
+				clipSoftness.y ?? 0,
+			], 'component clipSoftness'));
 		}
 		if (typedComp.getOpaque?.() === false) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.opaque, 'false');
 		const mask = typedComp.getMask?.();
@@ -255,7 +274,7 @@ export async function writeComponent(
 			const scrollBarFlags = typedComp.getScrollBarFlags?.() ?? 0;
 			if (scrollBarFlags !== 0) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.scrollBarFlags, String(scrollBarFlags));
 			const scrollBarMargin = typedComp.getScrollBarMargin?.();
-			if (hasNonZeroInsets(scrollBarMargin)) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.scrollBarMargin, formatInsets(scrollBarMargin!));
+			if (hasNonZeroInsets(scrollBarMargin)) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.scrollBarMargin, formatInsets(scrollBarMargin!, 'component scrollBarMargin'));
 			const vtScrollBarRes = typedComp.getVtScrollBarRes?.() ?? '';
 			const hzScrollBarRes = typedComp.getHzScrollBarRes?.() ?? '';
 			if (vtScrollBarRes || hzScrollBarRes) writeXmlAttr(compAttrs, PROJECT_XML_PROTOCOL.componentRoot.attrs.scrollBarRes, `${vtScrollBarRes},${hzScrollBarRes}`);
@@ -295,7 +314,7 @@ export async function writeComponent(
 
 		const customProperties = typedComp.getCustomProperties?.() ?? [];
 		const customPropertyChildName = getProtocolChildName(PROJECT_XML_PROTOCOL.componentRoot, 'customProperty');
-		const customPropertyProtocol = PROJECT_XML_PROTOCOL.componentRoot.children?.customProperty;
+		const customPropertyProtocol = PROJECT_XML_PROTOCOL.componentRoot.children!.customProperty!;
 		if (customProperties.length > 0 && customPropertyChildName) {
 			compNode[customPropertyChildName] = customProperties.map((property) => {
 				const attrs: Record<string, unknown> = {};
@@ -314,7 +333,7 @@ export async function writeComponent(
 				case 'Button': {
 					if ((typedComp.getButtonMode?.() ?? 0) !== 0) writeXmlAttr(extAttrs, extSpecs.mode, formatButtonMode(typedComp.getButtonMode?.() ?? 0));
 					if (typedComp.getSound?.()) writeXmlAttr(extAttrs, extSpecs.sound, typedComp.getSound?.());
-					if ((typedComp.getSoundVolumeScale?.() ?? 1) !== 1) writeXmlAttr(extAttrs, extSpecs.soundVolumeScale, String(typedComp.getSoundVolumeScale?.() ?? 1));
+					if ((typedComp.getSoundVolumeScale?.() ?? 1) !== 1) writeXmlAttr(extAttrs, extSpecs.soundVolumeScale, String(Math.round((typedComp.getSoundVolumeScale?.() ?? 1) * 100)));
 					const downEffect = typedComp.getDownEffect?.() ?? 0;
 					if (downEffect !== 0) {
 						writeXmlAttr(extAttrs, extSpecs.downEffect, String(downEffect));
@@ -367,6 +386,15 @@ function serializeController(ctrl: Controller): Record<string, unknown> {
 		writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.name, ctrl.getName());
 		writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.pages, pagesStr);
 		writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.selected, String(ctrl.getSelectedIndex()));
+		if (ctrl.getAlias()) writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.alias, ctrl.getAlias());
+		if (ctrl.getAutoRadioGroupDepth()) writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.autoRadioGroupDepth, 'true');
+		if (ctrl.getExported()) writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.exported, 'true');
+		if (ctrl.getHomePageType() !== 'default') {
+			writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.homePageType, ctrl.getHomePageType());
+		}
+		if (ctrl.getHomePageType() === 'specific' || ctrl.getHomePageType() === 'variable') {
+			writeXmlAttr(attrs, PROJECT_XML_PROTOCOL.controller.attrs.homePage, ctrl.getHomePage());
+		}
 		const actions = ctrl.listActions().map((action) => serializeControllerAction(action as WritableControllerAction));
 		const actionChildName = getProtocolChildName(PROJECT_XML_PROTOCOL.controller, 'action');
 		if (actions.length > 0 && actionChildName) attrs[actionChildName] = actions;

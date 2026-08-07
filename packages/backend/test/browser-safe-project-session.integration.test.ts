@@ -1,8 +1,6 @@
-import test from 'ava';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { createTestMovieClipJta, getFixtureProjectPath } from '@openfairygui/test-utils';
-import { deriveMovieClipModelFromJta } from '@openfairygui/core';
+import { Document, deriveMovieClipModelFromJta } from '@openfairygui/core';
 import { ProjectReader, ProjectWriter } from '@openfairygui/core/project-io';
 import {
 	createDefaultUamComponentProperties,
@@ -16,12 +14,20 @@ import {
 	type UamGraphProperties,
 	type UamGroupProperties,
 	type UamListNode,
+	type UamMovieClipResource,
 	type UamPackage,
 	type UamProject,
+	type UamTreeProperties,
 	type UamTransactionOperation,
-	type UamMovieClipResource,
 } from '@openfairygui/core/uam';
-import { BackendRuntime, createBackendStorageFileSystem, type BackendAsyncStorageAdapter } from '../src/index.js';
+import { createTestMovieClipJta, createUamDisplayNodeBase, getFixtureProjectPath } from '@openfairygui/test-utils';
+import test from 'ava';
+import {
+	type BackendAsyncStorageAdapter,
+	BackendRuntime,
+	type BackendSessionLock,
+	createBackendStorageFileSystem,
+} from '../src/index.js';
 import { createBackendFixtureProject } from './helpers.js';
 
 const LAYABOX_PROJECT_PATH = getFixtureProjectPath(
@@ -29,9 +35,15 @@ const LAYABOX_PROJECT_PATH = getFixtureProjectPath(
 	'demo/UIProject/FairyGUI-layabox-demo.fairy',
 );
 
+function backendFailure<T extends { ok: boolean }>(result: T): Extract<T, { ok: false }> {
+	if (result.ok) throw new Error('Expected a backend failure.');
+	return result as Extract<T, { ok: false }>;
+}
+
 class MemoryBrowserStorage implements BackendAsyncStorageAdapter {
 	private readonly files = new Map<string, Uint8Array>();
 	private readonly directories = new Set<string>(['.']);
+	private readonly sessionLocks = new Set<string>();
 
 	public hasFile(filePath: string): boolean {
 		return this.files.has(this.normalize(filePath));
@@ -39,6 +51,15 @@ class MemoryBrowserStorage implements BackendAsyncStorageAdapter {
 
 	public hasDirectory(dirPath: string): boolean {
 		return this.directories.has(this.normalize(dirPath));
+	}
+
+	public snapshot(): { files: Array<[string, number[]]>; directories: string[] } {
+		return {
+			files: [...this.files.entries()]
+				.map(([filePath, data]) => [filePath, [...data]] as [string, number[]])
+				.sort(([left], [right]) => left.localeCompare(right)),
+			directories: [...this.directories].sort(),
+		};
 	}
 
 	public async readFile(filePath: string): Promise<string> {
@@ -104,6 +125,29 @@ class MemoryBrowserStorage implements BackendAsyncStorageAdapter {
 		throw new Error(`Missing path: ${filePath}`);
 	}
 
+	public async acquireSessionLock(lockPath: string): Promise<BackendSessionLock> {
+		const normalized = this.normalize(lockPath);
+		if (this.sessionLocks.has(normalized)) {
+			const error = new Error(`Session lock is already held: ${normalized}`) as Error & { code: string };
+			error.code = 'EEXIST';
+			throw error;
+		}
+		this.sessionLocks.add(normalized);
+		let released = false;
+		return {
+			writeMetadata(): Promise<void> {
+				return Promise.resolve();
+			},
+			release: (): Promise<void> => {
+				if (!released) {
+					released = true;
+					this.sessionLocks.delete(normalized);
+				}
+				return Promise.resolve();
+			},
+		};
+	}
+
 	public async unlink(filePath: string): Promise<void> {
 		this.files.delete(this.normalize(filePath));
 	}
@@ -129,6 +173,36 @@ class MemoryBrowserStorage implements BackendAsyncStorageAdapter {
 		parts.pop();
 		return parts.join('/') || '.';
 	}
+}
+
+class FakeWebLockManager {
+	private readonly heldNames = new Set<string>();
+
+	public abandonAll(): void {
+		this.heldNames.clear();
+	}
+
+	public request<T>(name: string, options: LockOptions, callback: LockGrantedCallback<T>): Promise<T> {
+		const available = !this.heldNames.has(name);
+		const lock = available ? { name, mode: options.mode ?? 'exclusive' } as Lock : null;
+		if (lock) this.heldNames.add(name);
+		return Promise.resolve(callback(lock)).finally(() => {
+			if (lock) this.heldNames.delete(name);
+		});
+	}
+}
+
+function installWebLockManager(lockManager: FakeWebLockManager): () => void {
+	const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+	Object.defineProperty(globalThis, 'navigator', {
+		configurable: true,
+		enumerable: true,
+		value: { locks: lockManager },
+	});
+	return () => {
+		if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor);
+		else Reflect.deleteProperty(globalThis, 'navigator');
+	};
 }
 
 class FailingMemoryBrowserStorage extends MemoryBrowserStorage {
@@ -361,6 +435,7 @@ function createLifecycleComponent(id = 'cmp002', name = 'Popup'): UamComponentRe
 			customData: '',
 			displayList: [
 				{
+					...createUamDisplayNodeBase('popup-title', 'title'),
 					kind: 'text',
 					...createLifecyclePlainTextProperties(),
 					id: 'popup-title',
@@ -378,6 +453,7 @@ function createLifecycleComponent(id = 'cmp002', name = 'Popup'): UamComponentRe
 					group: '',
 				},
 				{
+					...createUamDisplayNodeBase('popup-rich', 'rich'),
 					kind: 'richText',
 					...createDefaultUamTextProperties(),
 					id: 'popup-rich',
@@ -404,6 +480,7 @@ function createLifecycleComponent(id = 'cmp002', name = 'Popup'): UamComponentRe
 					shadowOffset: { x: 0, y: 1 },
 				},
 				{
+					...createUamDisplayNodeBase('popup-input', 'input'),
 					kind: 'textInput',
 					...createDefaultUamPlainTextProperties(),
 					id: 'popup-input',
@@ -558,6 +635,73 @@ test('browser storage adapters require file and folder cleanup primitives', (t) 
 	t.is(rmdirError?.message, 'Storage adapter must provide rmdir() for project resource folder lifecycle writes.');
 });
 
+test.serial('browser Web Locks reject live peers and recover after abrupt owner termination', async (t) => {
+	const lockManager = new FakeWebLockManager();
+	const restoreNavigator = installWebLockManager(lockManager);
+	const storage = new MemoryBrowserStorage();
+	Object.defineProperty(storage, 'acquireSessionLock', { value: undefined });
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const fairyPath = 'Project.fairy';
+	const bootstrapRuntime = new BackendRuntime();
+	const bootstrap = bootstrapRuntime.openProjectSession({
+		project: createBackendFixtureProject(),
+		storage: { fileSystem, fairyPath },
+	});
+	t.true(bootstrap.ok);
+	if (!bootstrap.ok) {
+		restoreNavigator();
+		return;
+	}
+	const materialized = await bootstrapRuntime.materializeSession({
+		sessionId: bootstrap.data.sessionId,
+		expectedRevision: bootstrap.data.revision,
+		mode: 'fullProject',
+		reason: 'workspace_bootstrap',
+	});
+	await bootstrapRuntime.closeSession({ sessionId: bootstrap.data.sessionId });
+	t.true(materialized.ok);
+	if (!materialized.ok) {
+		restoreNavigator();
+		return;
+	}
+
+	const firstRuntime = new BackendRuntime({ fileSystem: createBackendStorageFileSystem(storage) });
+	const first = await firstRuntime.openSession({ projectPath: '.' });
+	t.true(first.ok);
+	if (!first.ok) {
+		restoreNavigator();
+		return;
+	}
+	try {
+		t.is(first.data.uamFidelity, 'full');
+		t.true(first.data.lockHeld);
+		t.false(storage.hasFile('.openfairygui.backend.lock'));
+
+		const peerRuntime = new BackendRuntime({ fileSystem: createBackendStorageFileSystem(storage) });
+		const peer = await peerRuntime.openSession({ projectPath: '.' });
+		t.false(peer.ok);
+		if (!peer.ok) {
+			const failure = backendFailure(peer);
+			t.is(failure.error.code, 'lock_conflict');
+			if (failure.error.code === 'lock_conflict') t.is(failure.error.kind, 'advisory_lock_conflict');
+		}
+
+		lockManager.abandonAll();
+		const recoveredRuntime = new BackendRuntime({ fileSystem: createBackendStorageFileSystem(storage) });
+		const recovered = await recoveredRuntime.openSession({ projectPath: '.' });
+		t.true(recovered.ok);
+		if (recovered.ok) {
+			t.is(recovered.data.uamFidelity, 'full');
+			t.true(recovered.data.lockHeld);
+			t.false(storage.hasFile('.openfairygui.backend.lock'));
+			await recoveredRuntime.closeSession({ sessionId: recovered.data.sessionId });
+		}
+	} finally {
+		await firstRuntime.closeSession({ sessionId: first.data.sessionId });
+		restoreNavigator();
+	}
+});
+
 test('browser-safe project session saves through injected async storage', async (t) => {
 	const storage = new MemoryBrowserStorage();
 	const fileSystem = createBackendStorageFileSystem(storage);
@@ -671,6 +815,25 @@ test('browser-safe project session saves through injected async storage', async 
 	if (!opened.ok) return;
 	t.false(opened.data.lockHeld);
 	t.is(opened.data.canonicalProjectPath, '.');
+	const storageBeforeUnchanged = storage.snapshot();
+	const unchanged = await runtime.applyTransaction({
+		sessionId: opened.data.sessionId,
+		expectedRevision: 0,
+		operations: [{
+			kind: 'setDisplayNodeProps',
+			selector: { packageId: 'pkg001', componentResourceId: 'cmp001', displayNodeId: 'n1' },
+			props: { text: 'Title' },
+		}],
+	});
+	t.false(unchanged.ok);
+	if (unchanged.ok) return;
+	t.is(unchanged.meta.diagnostics[0]?.code, 'display_node_props_unchanged');
+	const unchangedSession = runtime.getSession({ sessionId: opened.data.sessionId });
+	t.true(unchangedSession.ok);
+	if (!unchangedSession.ok) return;
+	t.is(unchangedSession.data.revision, 0);
+	t.false(unchangedSession.data.dirty);
+	t.deepEqual(storage.snapshot(), storageBeforeUnchanged);
 
 	const applied = await runtime.applyTransaction({
 		sessionId: opened.data.sessionId,
@@ -757,6 +920,104 @@ test('browser-safe project session saves through injected async storage', async 
 			t.deepEqual((group as unknown as Record<string, unknown>)[key], value);
 		}
 	}
+});
+
+test('browser-safe tree clickToExpand supports double-click mode and rejects non-mutating writes', async (t) => {
+	const document = new Document();
+	const pkg = document.createPackage('TreePkg');
+	pkg.setId('treepkg01');
+	const component = document.createComponent('TreeHost');
+	component.setId('treehost01');
+	component.setSize(320, 180);
+	const sourceTree = document.createGTree('tree');
+	sourceTree.setId('tree01');
+	sourceTree.setClickToExpand(0);
+	component.addChild(sourceTree);
+	pkg.addResource(component);
+	const project = normalizeUamProject(liftDocumentToUamProject(document));
+	const componentResource = project.packages[0]?.resources.find((resource) => resource.id === 'treehost01');
+	const tree = componentResource?.kind === 'component'
+		? componentResource.component.displayList.find((node) => node.id === 'tree01')
+		: null;
+	if (tree?.kind !== 'tree') {
+		t.fail('expected tree fixture node');
+		return;
+	}
+	const properties = structuredClone(tree) as unknown as Record<string, unknown>;
+	for (const key of [
+		'kind', 'id', 'name', 'position', 'size', 'locked', 'aspect', 'minSize', 'maxSize', 'pivot',
+		'pivotAsAnchor', 'scale', 'skew', 'visible', 'touchable', 'grayed', 'alpha', 'rotation', 'tooltips',
+		'blendMode', 'filter', 'filterData', 'customData', 'relations', 'gears', 'group',
+	]) delete properties[key];
+	const initialProperties = properties as unknown as UamTreeProperties;
+	const selector = { packageId: 'treepkg01', componentResourceId: 'treehost01', displayNodeId: 'tree01' };
+	const storage = new MemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const runtime = new BackendRuntime();
+	const opened = runtime.openProjectSession({
+		project,
+		storage: { fileSystem, fairyPath: 'TreeClick/Project.fairy' },
+	});
+	t.true(opened.ok);
+	if (!opened.ok) return;
+	const readTree = async () => {
+		const reloaded = normalizeUamProject(liftDocumentToUamProject(
+			await new ProjectReader(fileSystem).read('TreeClick/Project.fairy'),
+		));
+		const resource = reloaded.packages[0]?.resources.find((candidate) => candidate.id === 'treehost01');
+		return resource?.kind === 'component'
+			? resource.component.displayList.find((node) => node.id === 'tree01')
+			: null;
+	};
+	let revision = 0;
+	for (const clickToExpand of [1, 2, 0]) {
+		const applied = await runtime.applyTransaction({
+			sessionId: opened.data.sessionId,
+			expectedRevision: revision,
+			operations: [{
+				kind: 'setDisplayNodeProps',
+				selector,
+				props: { listProperties: { ...initialProperties, clickToExpand } },
+			}],
+		});
+		t.true(applied.ok);
+		if (!applied.ok) return;
+		revision = applied.data.revision;
+		t.true((await runtime.saveSession({ sessionId: opened.data.sessionId, expectedRevision: revision })).ok);
+		const reloadedTree = await readTree();
+		t.is(reloadedTree?.kind, 'tree');
+		if (reloadedTree?.kind === 'tree') {
+			t.deepEqual(reloadedTree, { ...tree, clickToExpand });
+		}
+	}
+
+	const storageBeforeRejected = storage.snapshot();
+	for (const clickToExpand of [-1, 3, 1.5, true, '2', null] as const) {
+		const rejected = await runtime.applyTransaction({
+			sessionId: opened.data.sessionId,
+			expectedRevision: revision,
+			operations: [{
+				kind: 'setDisplayNodeProps',
+				selector,
+				props: { listProperties: { ...initialProperties, clickToExpand: clickToExpand as number } },
+			}],
+		});
+		t.false(rejected.ok);
+		if (!rejected.ok) t.is(rejected.meta.diagnostics[0]?.code, 'invalid_display_node_payload');
+	}
+	const unchanged = await runtime.applyTransaction({
+		sessionId: opened.data.sessionId,
+		expectedRevision: revision,
+		operations: [{ kind: 'setDisplayNodeProps', selector, props: { listProperties: initialProperties } }],
+	});
+	t.false(unchanged.ok);
+	if (!unchanged.ok) t.is(unchanged.meta.diagnostics[0]?.code, 'display_node_props_unchanged');
+	const session = runtime.getSession({ sessionId: opened.data.sessionId });
+	t.true(session.ok);
+	if (!session.ok) return;
+	t.is(session.data.revision, revision);
+	t.false(session.data.dirty);
+	t.deepEqual(storage.snapshot(), storageBeforeRejected);
 });
 
 test('browser-safe addResource indexes survive multi-resource inverse save and reload', async (t) => {
@@ -882,7 +1143,7 @@ test('browser-safe resource favorite transactions survive save, reload, and inve
 	});
 	t.false(rejected.ok);
 	if (rejected.ok) return;
-	t.is(rejected.error.code, 'transaction_unsupported');
+	t.is(backendFailure(rejected).error.code, 'transaction_unsupported');
 	t.is(rejected.meta.diagnostics[0]?.path, 'operations[0].favorite');
 
 	const applied = await runtime.applyTransaction({
@@ -1017,7 +1278,7 @@ test('browser-safe project settings transactions survive save, reload, inverse, 
 	});
 	t.false(rejected.ok);
 	if (rejected.ok) return;
-	t.is(rejected.error.code, 'transaction_unsupported');
+	t.is(backendFailure(rejected).error.code, 'transaction_unsupported');
 	t.is(rejected.meta.diagnostics[0]?.code, 'invalid_project_settings');
 	t.is((runtime.getSession({ sessionId }) as { ok: true; data: { revision: number; dirty: boolean } }).data.revision, 3);
 	t.false((runtime.getSession({ sessionId }) as { ok: true; data: { revision: number; dirty: boolean } }).data.dirty);
@@ -1146,10 +1407,11 @@ test('browser-safe resource folder favorite transactions survive atomic save, re
 	});
 	t.false(rejected.ok);
 	if (rejected.ok) return;
-	t.is(rejected.error.code, 'transaction_unsupported');
+	const failure = backendFailure(rejected);
+	t.is(failure.error.code, 'transaction_unsupported');
 	t.is(rejected.meta.diagnostics[0]?.path, 'operations[1].selector');
-	t.is(rejected.session?.revision, 0);
-	t.false(rejected.session?.dirty ?? true);
+	t.is(failure.session?.revision, 0);
+	t.false(failure.session?.dirty ?? true);
 	t.deepEqual(project, original);
 
 	const operations = [
@@ -1198,6 +1460,76 @@ test('browser-safe resource folder favorite transactions survive atomic save, re
 	t.false(restored.packages[0]!.resources.find((resource) => resource.id === 'img001')?.favorite);
 });
 
+test('browser-safe resource folder atlas transactions preserve revision, save, reload, clear, and branch scope', async (t) => {
+	const storage = new MemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const project = createBackendFixtureProject();
+	project.branches = ['mobile'];
+	project.packages[0]!.folders.push({ branch: 'mobile', path: '/branch/', favorite: false, atlas: '' });
+	const original = structuredClone(project);
+	const runtime = new BackendRuntime();
+	const opened = runtime.openProjectSession({
+		project,
+		storage: { fileSystem, fairyPath: 'FolderAtlases/Project.fairy' },
+	});
+	t.true(opened.ok);
+	if (!opened.ok) return;
+	const sessionId = opened.data.sessionId;
+
+	for (const [atlas, code] of [['atlas0', 'invalid_resource_folder_atlas'], ['', 'resource_folder_atlas_unchanged']] as const) {
+		const rejected = await runtime.applyTransaction({
+			sessionId,
+			expectedRevision: 0,
+			operations: [{ kind: 'setResourceFolderAtlas', selector: { packageId: 'pkg001', path: '/images/' }, atlas }],
+		});
+		t.false(rejected.ok);
+		if (rejected.ok) return;
+		const failure = backendFailure(rejected);
+		t.is(rejected.meta.diagnostics[0]?.code, code);
+		t.is(failure.session?.revision, 0);
+		t.false(failure.session?.dirty ?? true);
+	}
+	t.deepEqual(project, original);
+
+	const operations = [
+		{ kind: 'setResourceFolderAtlas' as const, selector: { packageId: 'pkg001', path: '/images/' }, atlas: '2' },
+		{ kind: 'setResourceFolderAtlas' as const, selector: { packageId: 'pkg001', branch: 'mobile', path: '/branch/' }, atlas: '10' },
+	];
+	const applied = await runtime.applyTransaction({ sessionId, expectedRevision: 0, operations });
+	t.true(applied.ok);
+	if (!applied.ok) return;
+	t.is(applied.data.revision, 1);
+	t.true(applied.data.dirty);
+	t.true((await runtime.saveSession({ sessionId })).ok);
+
+	const packageXml = await storage.readFile('FolderAtlases/assets/Main/package.xml');
+	const branchXml = await storage.readFile('FolderAtlases/assets_mobile/Main/package_branch.xml');
+	t.regex(packageXml, /<folder[^>]*name="images"[^>]*atlas="2"/);
+	t.regex(branchXml, /<folder[^>]*name="branch"[^>]*atlas="10"/);
+	const reloaded = normalizeUamProject(
+		liftDocumentToUamProject(await new ProjectReader(fileSystem).read('FolderAtlases/Project.fairy')),
+	);
+	t.is(reloaded.packages[0]!.folders.find((folder) => folder.path === '/images/')?.atlas, '2');
+	t.is(reloaded.packages[0]!.folders.find((folder) => folder.branch === 'mobile')?.atlas, '10');
+
+	const inverse = await runtime.applyTransaction({
+		sessionId,
+		expectedRevision: 1,
+		operations: operations.map((operation) => ({ ...operation, atlas: '' })),
+	});
+	t.true(inverse.ok);
+	if (!inverse.ok) return;
+	t.is(inverse.data.revision, 2);
+	t.true((await runtime.saveSession({ sessionId })).ok);
+	t.notRegex(await storage.readFile('FolderAtlases/assets/Main/package.xml'), /<folder[^>]*name="images"/);
+	t.notRegex(await storage.readFile('FolderAtlases/assets_mobile/Main/package_branch.xml'), /<folder[^>]*name="branch"/);
+	const restored = normalizeUamProject(
+		liftDocumentToUamProject(await new ProjectReader(fileSystem).read('FolderAtlases/Project.fairy')),
+	);
+	t.is(restored.packages[0]!.folders.find((folder) => folder.path === '/images/')?.atlas, '');
+	t.is(restored.packages[0]!.folders.find((folder) => folder.branch === 'mobile')?.atlas, '');
+});
+
 test('browser-safe resource exported transactions survive save, reload, and inverse', async (t) => {
 	const storage = new MemoryBrowserStorage();
 	const fileSystem = createBackendStorageFileSystem(storage);
@@ -1221,7 +1553,7 @@ test('browser-safe resource exported transactions survive save, reload, and inve
 	});
 	t.false(rejected.ok);
 	if (rejected.ok) return;
-	t.is(rejected.error.code, 'transaction_unsupported');
+	t.is(backendFailure(rejected).error.code, 'transaction_unsupported');
 	t.is(rejected.meta.diagnostics[0]?.path, 'operations[0].exported');
 
 	const operations = ['img001', 'cmp001'].map((resourceId) => ({
@@ -1283,7 +1615,7 @@ test('browser-safe empty resource folders survive lifecycle saves and reloads', 
 				selector: { packageId: 'pkg001' },
 				path: '/empty/',
 				favorite: true,
-				atlas: 'atlas0',
+				atlas: '0',
 			},
 			{ kind: 'addResourceFolder', selector: { packageId: 'pkg001' }, path: '/target/' },
 			{ kind: 'addResourceFolder', selector: { packageId: 'pkg001' }, branch: 'mobile', path: '/branch-empty/' },
@@ -1295,13 +1627,13 @@ test('browser-safe empty resource folders survive lifecycle saves and reloads', 
 	t.true(storage.hasDirectory('Folders/assets/Main/empty'));
 	t.true(storage.hasDirectory('Folders/assets_mobile/Main/branch-empty'));
 	const packageXml = await storage.readFile('Folders/assets/Main/package.xml');
-	t.regex(packageXml, /<folder[^>]*name="empty"[^>]*favorite="true"[^>]*atlas="atlas0"/);
+	t.regex(packageXml, /<folder[^>]*name="empty"[^>]*favorite="true"[^>]*atlas="0"/);
 
 	const reloaded = normalizeUamProject(
 		liftDocumentToUamProject(await new ProjectReader(fileSystem).read('Folders/Project.fairy')),
 	);
 	const empty = reloaded.packages[0]?.folders.find((folder) => folder.path === '/empty/');
-	t.deepEqual(empty, { branch: '', path: '/empty/', favorite: true, atlas: 'atlas0' });
+	t.deepEqual(empty, { branch: '', path: '/empty/', favorite: true, atlas: '0' });
 	t.true(reloaded.packages[0]?.folders.some((folder) => folder.branch === '' && folder.path === '/target/'));
 	t.true(reloaded.packages[0]?.folders.some((folder) => folder.branch === 'mobile' && folder.path === '/branch-empty/'));
 
@@ -1639,7 +1971,14 @@ test('real LayaBox UAM sessions persist atomic resource dependency moves in brow
 	};
 	const nested = createLifecycleComponent('issue34nested', 'Issue34Nested');
 	nested.component.displayList = [{
+		...createUamDisplayNodeBase('issue34-image-ref', 'issue34-image-ref'),
 		kind: 'image',
+		color: '#ffffff',
+		flip: 0,
+		fillMethod: 0,
+		fillOrigin: 0,
+		fillClockwise: true,
+		fillAmount: 100,
 		id: 'issue34-image-ref',
 		name: 'issue34-image-ref',
 		position: { x: 0, y: 0 },
@@ -1666,6 +2005,7 @@ test('real LayaBox UAM sessions persist atomic resource dependency moves in brow
 	copiedImageNode.resource = { packageId: '', resourceId: copiedImage.id };
 	const movable = createLifecycleComponent('issue9cmp', 'Issue9Movable');
 	const originalNestedReference: UamComponentRefNode = {
+		...createUamDisplayNodeBase('issue34-nested-ref', 'issue34-nested-ref'),
 		kind: 'component',
 		id: 'issue34-nested-ref',
 		name: 'issue34-nested-ref',
@@ -1686,6 +2026,7 @@ test('real LayaBox UAM sessions persist atomic resource dependency moves in brow
 	const host = createLifecycleComponent('issue9host', 'Issue9Host');
 	host.component.displayList = [];
 	const originalReference: UamComponentRefNode = {
+		...createUamDisplayNodeBase('issue9-ref', 'issue9-ref'),
 		kind: 'component',
 		id: 'issue9-ref',
 		name: 'issue9-ref',
@@ -2291,8 +2632,6 @@ test('browser-safe LayaBox storage sessions reject lossy UAM saves before touchi
 	const projectRoot = 'LayaBoxProject';
 	const fairyPath = `${projectRoot}/${path.basename(LAYABOX_PROJECT_PATH)}`;
 	await copyDirectoryToStorage(storage, path.dirname(LAYABOX_PROJECT_PATH), projectRoot);
-	const originalFairy = await storage.readFileRaw(fairyPath);
-
 	const fileSystem = createBackendStorageFileSystem(storage);
 	const reader = new ProjectReader(fileSystem);
 	const initial = normalizeUamProject(liftDocumentToUamProject(await reader.read(fairyPath, { hydrateResourceBytes: true })));
@@ -2379,11 +2718,21 @@ test('browser-safe LayaBox storage sessions reject lossy UAM saves before touchi
 		t.true(appliedRename.ok);
 		if (!appliedRename.ok) return;
 		revision = appliedRename.data.revision;
+		const storageBeforeRejectedWrites = storage.snapshot();
 		const renamedSave = await runtime.saveSession({ sessionId, expectedRevision: revision });
 		t.false(renamedSave.ok);
 		if (!renamedSave.ok) {
-			t.is(renamedSave.error.code, 'uam_fidelity_unsupported');
-			t.deepEqual(await storage.readFileRaw(fairyPath), originalFairy);
+			t.is(backendFailure(renamedSave).error.code, 'uam_fidelity_unsupported');
+			t.deepEqual(storage.snapshot(), storageBeforeRejectedWrites);
+			const materialized = await runtime.materializeSession({
+				sessionId,
+				expectedRevision: revision,
+				mode: 'fullProject',
+				reason: 'issue_87_fidelity_guard',
+			});
+			t.false(materialized.ok);
+			if (!materialized.ok) t.is(backendFailure(materialized).error.code, 'uam_fidelity_unsupported');
+			t.deepEqual(storage.snapshot(), storageBeforeRejectedWrites);
 			return;
 		}
 
@@ -2593,6 +2942,61 @@ test('browser-safe LayaBox storage sessions reject lossy UAM saves before touchi
 	}
 });
 
+test('browser storage openSession preserves full UAM fidelity and saves verified projects', async (t) => {
+	const storage = new MemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const fairyPath = 'VerifiedProject/Project.fairy';
+	const bootstrapRuntime = new BackendRuntime();
+	const bootstrap = bootstrapRuntime.openProjectSession({
+		project: createBackendFixtureProject(),
+		storage: { fileSystem, fairyPath },
+	});
+	t.true(bootstrap.ok);
+	if (!bootstrap.ok) return;
+	const bootstrapped = await bootstrapRuntime.materializeSession({
+		sessionId: bootstrap.data.sessionId,
+		expectedRevision: bootstrap.data.revision,
+		mode: 'fullProject',
+		reason: 'workspace_bootstrap',
+	});
+	t.true(bootstrapped.ok);
+	await bootstrapRuntime.closeSession({ sessionId: bootstrap.data.sessionId });
+	if (!bootstrapped.ok) return;
+
+	const runtime = new BackendRuntime({ fileSystem });
+	const opened = await runtime.openSession({ projectPath: 'VerifiedProject' });
+	t.true(opened.ok);
+	if (!opened.ok) return;
+	t.is(opened.data.uamFidelity, 'full');
+	try {
+		const applied = await runtime.applyTransaction({
+			sessionId: opened.data.sessionId,
+			expectedRevision: opened.data.revision,
+			operations: [{
+				kind: 'setDisplayNodeProps',
+				selector: { packageId: 'pkg001', componentResourceId: 'cmp001', displayNodeId: 'n1' },
+				props: { text: 'Verified browser save' },
+			}],
+		});
+		t.true(applied.ok);
+		if (!applied.ok) return;
+		const saved = await runtime.saveSession({
+			sessionId: opened.data.sessionId,
+			expectedRevision: applied.data.revision,
+		});
+		t.true(saved.ok);
+		if (!saved.ok) return;
+		const reloaded = normalizeUamProject(liftDocumentToUamProject(await new ProjectReader(fileSystem).read(fairyPath)));
+		const component = reloaded.packages[0]?.resources.find((resource) => resource.id === 'cmp001');
+		const node = component?.kind === 'component'
+			? component.component.displayList.find((candidate) => candidate.id === 'n1')
+			: null;
+		t.is(node?.kind === 'text' ? node.text : null, 'Verified browser save');
+	} finally {
+		await runtime.closeSession({ sessionId: opened.data.sessionId });
+	}
+});
+
 test('materializeSession writes a clean browser-safe session without advancing edit revision', async (t) => {
 	const storage = new MemoryBrowserStorage();
 	const fileSystem = createBackendStorageFileSystem(storage);
@@ -2749,10 +3153,11 @@ test('browser-safe MovieClip replacement, save, inverse, and invalid JTA keep se
 	});
 	t.false(invalid.ok);
 	if (invalid.ok) return;
-	t.is(invalid.error.code, 'transaction_unsupported');
+	const failure = backendFailure(invalid);
+	t.is(failure.error.code, 'transaction_unsupported');
 	t.true(invalid.meta.diagnostics.some((diagnostic) => diagnostic.code === 'invalid_movie_clip_jta'));
-	t.is(invalid.session?.revision, 2);
-	t.false(invalid.session?.dirty ?? true);
+	t.is(failure.session?.revision, 2);
+	t.false(failure.session?.dirty ?? true);
 	t.deepEqual(await storage.readFileRaw(fairyPath), fairyBeforeInvalid);
 	t.deepEqual(await storage.readFileRaw(packagePath), packageBeforeInvalid);
 	t.deepEqual(await storage.readFileRaw(sourcePath), sourceBeforeInvalid);
@@ -2895,6 +3300,7 @@ test('browser-safe clean save preserves property overrides and autoClearItems', 
 		src: '',
 		overflow: 0,
 		scrollType: 1,
+		scrollBarDisplay: 0,
 		scrollBarFlags: 0,
 		scrollBarMargin: { top: 0, bottom: 0, left: 0, right: 0 },
 		vtScrollBarRes: '',
@@ -2941,6 +3347,10 @@ test('browser-safe clean save preserves property overrides and autoClearItems', 
 			extensionType: 'ComboBox',
 			title: '',
 			icon: '',
+			titleColor: '',
+			popupDirection: 0,
+			sound: '',
+			soundVolumeScale: 1,
 			visibleItemCount: 0,
 			selectionController: '',
 			autoClearItems: true,
@@ -3156,7 +3566,7 @@ test.serial('applyTransaction rejects when its session closes during browser ima
 
 		const applied = await applying;
 		t.false(applied.ok);
-		if (!applied.ok) t.is(applied.error.code, 'session_not_found');
+		if (!applied.ok) t.is(backendFailure(applied).error.code, 'session_not_found');
 		t.false(runtime.getSession({ sessionId: opened.data.sessionId }).ok);
 	} finally {
 		if (workerDescriptor) Object.defineProperty(globalThis, 'Worker', workerDescriptor);

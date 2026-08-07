@@ -300,6 +300,17 @@ block 5 的 patch 用于替换 block 4 中相同索引位置的占位字符串�
 | 1 | `pages`（id + name）、`homePageType` |
 | 2 | `actions` 容器与 action payload |
 
+`homePageType:uint8` 的正式取值和附加 payload：
+
+| 值 | 语义 | 后续 payload |
+|---|---|---|
+| `0` | 第一页（`default`） | 无 |
+| `1` | 指定页（`specific`） | 页面索引 `int16` |
+| `2` | 匹配分支名（`branch`） | 无 |
+| `3` | 匹配变量值（`variable`） | 工程变量键字符串 |
+
+工程 XML 中的 controller `alias` 与 `exported` 属于编辑器元数据，不进入这个运行时 Controller block。
+
 `actions` block 先写 `actionCount:int16`，随后每个 action 以 `chunkSize:int16` 开头，action 正文顺序固定如下：
 
 | 字段 | 含义 |
@@ -443,7 +454,7 @@ child 自身带独立 index table，不同对象类型的 block 数量不同：
 | 类型 | 主要字段 |
 |---|---|
 | `GImage` | color、flip、fillMethod、fillOrigin、fillClockwise、fillAmount |
-| `GTextField` / `GRichTextField` / `GTextInput` | font、fontSize、color、align、vAlign、leading、letterSpacing、ubb、autoSize、underline、italic、bold、singleLine、stroke、shadow、strikethrough |
+| `GTextField` / `GRichTextField` / `GTextInput` | font、fontSize、color、align、vAlign、leading、letterSpacing、ubb、autoSize、underline、italic、bold、singleLine、stroke、shadow、strikethrough、faceDilate、outlineSoftness、underlaySoftness |
 | `GGraph` | graphType、lineSize、lineColor、fillColor、cornerRadius、points、sides、startAngle、distances |
 | `GGroup` | layout、lineGap、columnGap、excludeInvisibles、autoSizeDisabled、mainGridIndex |
 | `GLoader` | url、align、vAlign、fill、shrinkOnly、autoSize、playing、frame、color、fillMethod、useResize |
@@ -459,12 +470,20 @@ Block 6 用于恢复 afterAdd 阶段写入的数据：
 |---|---|
 | `GTextField` / `GRichTextField` / `GTextInput` | `text` |
 | `GButton` | `title`、`selectedTitle`、`icon`、`selectedIcon`、`titleColor`、`titleFontSize`、`relatedController`、`relatedPageId`、`sound`、`soundVolume`、`selected` |
-| `GLabel` | `title`、`icon`、`titleColor`、`titleFontSize`、输入设置占位、`sound` |
-| `GComboBox` | `items`、`values`、`icons`、`title`、`icon`、`visibleItemCount`、`popupDirection`、`selectionController`、`sound` |
-| `GProgressBar` / `GSlider` | `value`、`max`、`min`、`sound` |
+| `GLabel` | `title`、`icon`、`titleColor`、`titleFontSize`、输入设置占位、`sound`、`soundVolumeScale` |
+| `GComboBox` | `items`、`values`、`icons`、`title`、`icon`、`titleColor`、`visibleItemCount`、`popupDirection`、`selectionController`、`sound`、`soundVolumeScale` |
+| `GProgressBar` | `value`、`max`、`min`、`sound`、`soundVolumeScale` |
+| `GSlider` | `value`、`max`、`min` |
 | `GList` | `selectionController` |
 | `GComponent` Button 扩展实例 | `title`、`selectedTitle`、`icon`、`selectedIcon`、`titleColor`、`titleFontSize`、`relatedController`、`relatedPageId`、`sound`、`soundVolumeScale`、`selected` |
-| 其他扩展实例数据 | `InstanceExtType` 分支下的 Label / ComboBox / ProgressBar / Slider / ScrollBar 实例数据 |
+| `GComponent` Label 扩展实例 | `title`、`icon`、`titleColor`、`titleFontSize`、输入设置、`sound`、`soundVolumeScale` |
+| `GComponent` ComboBox 扩展实例 | `items`、`title`、`icon`、`titleColor`、`visibleItemCount`、`popupDirection`、`selectionController`、`sound`、`soundVolumeScale` |
+| `GComponent` ProgressBar 扩展实例 | `value`、`max`、`min`、`sound`、`soundVolumeScale` |
+| 其他扩展实例数据 | `InstanceExtType` 分支下的 Slider / ScrollBar 实例数据 |
+
+### Child Block 7：List ScrollPane
+
+`GList` 与 `GTree` 共用 Block 7，依次保存 `scrollType`、`scrollBarDisplay`（`0` default、`1` visible、`2` auto、`3` hidden）、`scrollBarFlags`、滚动条 margin 与滚动条/刷新资源引用。
 
 ### Child Block 8：静态 List Items
 

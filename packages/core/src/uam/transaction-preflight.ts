@@ -34,22 +34,31 @@ import {
 	isValidUamComponentPropertyOverride,
 	isValidUamComponentInstanceProperties,
 	isValidUamComponentProperties,
+	isValidUamImageProperties,
 	isValidUamImageResourceProperties,
+	isValidUamMovieClipProperties,
 	isValidUamMovieClipResourceProperties,
 	isValidUamTextProperties,
 	validateUamProject,
 } from './validate.js';
 import {
 	UamTransactionError,
+	type AddGearOperation,
 	type UamComponentSelector,
+	type UamControllerSelector,
 	type UamDisplayNodePropsUpdate,
 	type UamDisplayNodeSelector,
+	type UamGearSelector,
+	type UamPackageSelector,
+	type RemoveGearOperation,
 	type UamResourceSelector,
 	type UamResourceFolderSelector,
 	type SetDisplayNodePropsOperation,
+	type UamTransitionSelector,
 	type UamTransactionOperation,
 	type UamTransactionSupportIssue,
 	type UamTransactionSupportIssueCode,
+	type UpdateGearOperation,
 } from './transaction-contracts.js';
 import {
 	findComponentSpec,
@@ -399,6 +408,7 @@ const LIST_PROPERTY_KEYS = [
 	'src',
 	'overflow',
 	'scrollType',
+	'scrollBarDisplay',
 	'scrollBarFlags',
 	'scrollBarMargin',
 	'vtScrollBarRes',
@@ -662,6 +672,7 @@ function validatePackageSettingsPayload(
 	if (publish.sizeOption !== 'pot' && publish.sizeOption !== 'npot' && publish.sizeOption !== 'mof') {
 		pushInvalidPackageSettings(issues, `${path}.publish.sizeOption`, 'sizeOption must be pot, npot, or mof.', operationKind);
 	}
+	const maxAtlasIndex = isIntegerBetween(publish.maxAtlasIndex, 0, 255) ? publish.maxAtlasIndex : 255;
 	if (!isIntegerBetween(publish.maxAtlasIndex, 0, 255)) {
 		pushInvalidPackageSettings(issues, `${path}.publish.maxAtlasIndex`, 'maxAtlasIndex must be an integer from 0 to 255.', operationKind);
 	}
@@ -675,12 +686,14 @@ function validatePackageSettingsPayload(
 				pushInvalidPackageSettings(issues, atlasPath, 'Atlas entries must be complete typed snapshots.', operationKind);
 				continue;
 			}
-			if (!Number.isInteger(atlas.index) || atlas.index < 0 || atlas.index > publish.maxAtlasIndex) {
+			if (typeof atlas.index !== 'number' || !Number.isInteger(atlas.index) || atlas.index < 0 || atlas.index > maxAtlasIndex) {
 				pushInvalidPackageSettings(issues, `${atlasPath}.index`, 'Atlas index must be a non-negative integer no greater than maxAtlasIndex.', operationKind);
-			} else if (indices.has(atlas.index)) {
-				pushInvalidPackageSettings(issues, `${atlasPath}.index`, `Atlas index ${atlas.index} is duplicated.`, operationKind);
+			} else {
+				if (indices.has(atlas.index)) {
+					pushInvalidPackageSettings(issues, `${atlasPath}.index`, `Atlas index ${atlas.index} is duplicated.`, operationKind);
+				}
+				indices.add(atlas.index);
 			}
-			indices.add(atlas.index);
 			if (typeof atlas.name !== 'string' || (atlas.name && !isSafeBranchName(atlas.name))) {
 				pushInvalidPackageSettings(issues, `${atlasPath}.name`, 'Atlas name must be empty or a safe output path segment.', operationKind);
 			}
@@ -915,6 +928,7 @@ function isValidListProperties(
 		&& (properties.childrenRenderOrder === 2 || properties.apexIndex === 0)
 		&& isIntegerBetween(properties.overflow, 0, 2)
 		&& isIntegerBetween(properties.scrollType, 0, 2)
+		&& isIntegerBetween(properties.scrollBarDisplay, 0, 3)
 		&& Number.isInteger(properties.scrollBarFlags)
 		&& properties.scrollBarFlags >= 0
 		&& isFiniteEdgeInsets(properties.scrollBarMargin)
@@ -926,7 +940,7 @@ function isValidListProperties(
 	return properties.treeView === true
 		&& isFiniteNumber(properties.indent)
 		&& properties.indent >= 0
-		&& isIntegerBetween(properties.clickToExpand, 0, 1)
+		&& isIntegerBetween(properties.clickToExpand, 0, 2)
 		&& properties.listItems.every((item) => typeof item.isFolder === 'boolean');
 }
 
@@ -952,6 +966,7 @@ function validateDisplayPropsPayload(
 	path: string,
 	issues: UamTransactionSupportIssue[],
 ): void {
+	const initialIssueCount = issues.length;
 	const node = findDisplayNodeSpec(project, op.selector);
 	const nodeKind = node?.kind;
 	const hasTextProperties = op.props.textProperties !== undefined;
@@ -1116,6 +1131,46 @@ function validateDisplayPropsPayload(
 			}
 			continue;
 		}
+		if (key === 'imageProperties') {
+			if (nodeKind && nodeKind !== 'image') {
+				pushSupportIssue(
+					issues,
+					'unsupported_display_node_field',
+					`${path}.props.imageProperties`,
+					'Image properties are only supported on image display nodes.',
+					{ operationKind: op.kind, nodeKind, field: key },
+				);
+			} else if (!isValidUamImageProperties(op.props.imageProperties)) {
+				pushSupportIssue(
+					issues,
+					'invalid_display_node_payload',
+					`${path}.props.imageProperties`,
+					'Image properties must be a complete valid image property snapshot.',
+					{ operationKind: op.kind, nodeKind, field: key },
+				);
+			}
+			continue;
+		}
+		if (key === 'movieClipProperties') {
+			if (nodeKind && nodeKind !== 'movieClip') {
+				pushSupportIssue(
+					issues,
+					'unsupported_display_node_field',
+					`${path}.props.movieClipProperties`,
+					'MovieClip properties are only supported on movieClip display nodes.',
+					{ operationKind: op.kind, nodeKind, field: key },
+				);
+			} else if (!isValidUamMovieClipProperties(op.props.movieClipProperties)) {
+				pushSupportIssue(
+					issues,
+					'invalid_display_node_payload',
+					`${path}.props.movieClipProperties`,
+					'MovieClip properties must be a complete valid MovieClip property snapshot.',
+					{ operationKind: op.kind, nodeKind, field: key },
+				);
+			}
+			continue;
+		}
 		if (key === 'loaderProperties') {
 			if (nodeKind && nodeKind !== 'loader') {
 				pushSupportIssue(
@@ -1246,6 +1301,19 @@ function validateDisplayPropsPayload(
 			{ operationKind: op.kind, nodeKind, field: String(key) },
 		);
 	}
+	if (node && issues.length === initialIssueCount) {
+		const projected = structuredClone(node);
+		applyDisplayNodePropsUpdate(projected, op.props);
+		if (stableJson(projected) === stableJson(node)) {
+			pushSupportIssue(
+				issues,
+				'display_node_props_unchanged',
+				`${path}.props`,
+				'setDisplayNodeProps must change at least one display node property.',
+				{ operationKind: op.kind, nodeKind },
+			);
+		}
+	}
 }
 
 function validateUniquePageIds(
@@ -1315,6 +1383,26 @@ function validateControllerPayload(
 		);
 	}
 	const pageIds = new Set(controller.pages.map((page) => page.id));
+	if (typeof controller.autoRadioGroupDepth !== 'boolean') {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.autoRadioGroupDepth`, 'Controller autoRadioGroupDepth must be boolean.', { operationKind });
+	}
+	if (typeof controller.alias !== 'string') {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.alias`, 'Controller alias must be a string.', { operationKind });
+	}
+	if (typeof controller.exported !== 'boolean') {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.exported`, 'Controller exported must be boolean.', { operationKind });
+	}
+	if (!['default', 'specific', 'branch', 'variable'].includes(controller.homePageType)) {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.homePageType`, `Unknown controller home page type "${controller.homePageType}".`, { operationKind });
+	} else if (typeof controller.homePage !== 'string') {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.homePage`, 'Controller homePage must be a string.', { operationKind });
+	} else if (controller.homePageType === 'specific' && !pageIds.has(controller.homePage)) {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.homePage`, `Unknown controller home page id "${controller.homePage}".`, { operationKind });
+	} else if (controller.homePageType === 'variable' && !controller.homePage) {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.homePage`, 'Variable controller home page requires a custom property key.', { operationKind });
+	} else if ((controller.homePageType === 'default' || controller.homePageType === 'branch') && controller.homePage) {
+		pushSupportIssue(issues, 'invalid_controller_payload', `${path}.controller.homePage`, `Controller home page must be empty for "${controller.homePageType}".`, { operationKind });
+	}
 	for (const [actionIndex, action] of controller.actions.entries()) {
 		for (const pageId of action.fromPageIds) {
 			if (!pageIds.has(pageId)) {
@@ -1732,8 +1820,46 @@ function validateResourceFolderSelector(
 	return found;
 }
 
+function resourceFolderMaxAtlasIndexAt(
+	pkg: UamPackage,
+	operations: UamTransactionOperation[],
+	operationIndex: number,
+): number {
+	let maxAtlasIndex = pkg.publish?.maxAtlasIndex ?? 10;
+	for (let index = 0; index < operationIndex; index += 1) {
+		const operation = operations[index]!;
+		if (operation.kind !== 'updatePackageSettings' || operation.selector.packageId !== pkg.id) continue;
+		const settings = operation.settings as unknown;
+		if (!isPlainRecord(settings) || !isPlainRecord(settings.publish)) continue;
+		if (isIntegerBetween(settings.publish.maxAtlasIndex, 0, 255)) {
+			maxAtlasIndex = settings.publish.maxAtlasIndex;
+		}
+	}
+	return maxAtlasIndex;
+}
+
+function validateResourceFolderAtlas(
+	atlas: unknown,
+	maxAtlasIndex: number,
+	path: string,
+	issues: UamTransactionSupportIssue[],
+	operationKind: UamTransactionOperation['kind'],
+): atlas is string {
+	if (typeof atlas === 'string'
+		&& (atlas === '' || (/^(0|[1-9]\d*)$/.test(atlas) && Number(atlas) <= maxAtlasIndex))
+	) return true;
+	pushSupportIssue(
+		issues,
+		'invalid_resource_folder_atlas',
+		path,
+		`Resource folder atlas must be empty or a canonical slot index from 0 to ${maxAtlasIndex}.`,
+		{ operationKind },
+	);
+	return false;
+}
+
 function primaryResourceFileName(resource: UamAssetResource): string {
-	return resource.fileName ?? (resource.kind === 'image' ? '' : resource.file) ?? '';
+	return resource.fileName ?? ('file' in resource ? resource.file : '') ?? '';
 }
 
 function validateAssetSourceBytes(
@@ -2217,6 +2343,7 @@ function validateLifecycleOperationPayloads(
 			&& !isDisplayListRewriteOperation(operation)
 			&& operation.kind !== 'setDisplayNodeProps'
 			&& operation.kind !== 'setResourceFolderFavorite'
+			&& operation.kind !== 'setResourceFolderAtlas'
 		) continue;
 		const operationPath = `operations[${operationIndex}]`;
 		const issueCount = issues.length;
@@ -2368,9 +2495,13 @@ function validateLifecycleOperationPayloads(
 				if (operation.favorite !== undefined && typeof operation.favorite !== 'boolean') {
 					pushSupportIssue(issues, 'invalid_resource_payload', `${operationPath}.favorite`, 'addResourceFolder.favorite must be boolean.', { operationKind: operation.kind });
 				}
-				if (operation.atlas !== undefined && typeof operation.atlas !== 'string') {
-					pushSupportIssue(issues, 'invalid_resource_payload', `${operationPath}.atlas`, 'addResourceFolder.atlas must be a string.', { operationKind: operation.kind });
-				}
+				validateResourceFolderAtlas(
+					operation.atlas === undefined ? '' : operation.atlas,
+					pkg ? resourceFolderMaxAtlasIndexAt(pkg, operations, operationIndex) : 10,
+					`${operationPath}.atlas`,
+					issues,
+					operation.kind,
+				);
 				if (pkg && isSafeResourceFolderPath(operation.path)) {
 					if (!folderParentExists(pkg, branch, operation.path)) {
 						pushSupportIssue(issues, 'invalid_resource_folder_path', `${operationPath}.path`, `Parent folder "${resourceFolderParentPath(operation.path)}" does not exist.`, { operationKind: operation.kind });
@@ -2471,6 +2602,26 @@ function validateLifecycleOperationPayloads(
 			case 'setResourceFolderFavorite':
 				validateResourceFolderSelector(projected, operation.selector, `${operationPath}.selector`, issues, operation.kind);
 				break;
+			case 'setResourceFolderAtlas': {
+				const found = validateResourceFolderSelector(projected, operation.selector, `${operationPath}.selector`, issues, operation.kind);
+				const validAtlas = validateResourceFolderAtlas(
+					operation.atlas,
+					found ? resourceFolderMaxAtlasIndexAt(found.pkg, operations, operationIndex) : 10,
+					`${operationPath}.atlas`,
+					issues,
+					operation.kind,
+				);
+				if (found && validAtlas && found.folder.atlas === operation.atlas) {
+					pushSupportIssue(
+						issues,
+						'resource_folder_atlas_unchanged',
+						`${operationPath}.atlas`,
+						'setResourceFolderAtlas must change the selected folder atlas.',
+						{ operationKind: operation.kind },
+					);
+				}
+				break;
+			}
 		}
 		if (issues.length !== issueCount) continue;
 		if (isLifecycleOperation(operation)) {
@@ -2483,6 +2634,8 @@ function validateLifecycleOperationPayloads(
 			applyDisplayNodePropsUpdate(findDisplayNodeSpec(projected, operation.selector)!, operation.props);
 		} else if (operation.kind === 'setResourceFolderFavorite') {
 			findResourceFolder(projected, operation.selector)!.folder.favorite = operation.favorite;
+		} else if (operation.kind === 'setResourceFolderAtlas') {
+			findResourceFolder(projected, operation.selector)!.folder.atlas = operation.atlas;
 		} else {
 			applyUamDisplayListRewriteOperation(projected, operation);
 		}
@@ -2567,9 +2720,11 @@ function validateLifecycleBatchCompatibility(
 
 function requiresSequentialDisplayProjection(operations: UamTransactionOperation[]): boolean {
 	const hasDisplayListRewrite = operations.some(isDisplayListRewriteOperation);
-	return operations.some(isLifecycleOperation)
+	return operations.some((operation) => operation.kind === 'setDisplayNodeProps')
+		|| operations.some(isLifecycleOperation)
 		|| operations.some(isResourceLifecycleOperation)
 		|| operations.some(isResourceFolderLifecycleOperation)
+		|| operations.some((operation) => operation.kind === 'setResourceFolderAtlas')
 		|| (
 			hasDisplayListRewrite
 			&& (
@@ -2600,6 +2755,7 @@ function projectedAssetFileName(
 			continue;
 		}
 		if (!('selector' in operation)
+			|| !('packageId' in operation.selector)
 			|| operation.selector.packageId !== selector.packageId
 			|| !('resourceId' in operation.selector)
 			|| operation.selector.resourceId !== selector.resourceId
@@ -2624,6 +2780,7 @@ function imageReplacementSurvives(
 			continue;
 		}
 		if (!('selector' in operation)
+			|| !('packageId' in operation.selector)
 			|| operation.selector.packageId !== selector.packageId
 			|| !('resourceId' in operation.selector)
 			|| operation.selector.resourceId !== selector.resourceId
@@ -2724,7 +2881,7 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 						'invalid_resource_payload',
 						`${operationPath}.favorite`,
 						'setResourceFavorite.favorite must be boolean.',
-						{ operationKind: operation.kind },
+						{ operationKind: 'setResourceFavorite' },
 					);
 				}
 				break;
@@ -2738,9 +2895,11 @@ function validateOperationPayloads(project: UamProject, operations: UamTransacti
 						'invalid_resource_payload',
 						`${operationPath}.favorite`,
 						'setResourceFolderFavorite.favorite must be boolean.',
-						{ operationKind: operation.kind },
+						{ operationKind: 'setResourceFolderFavorite' },
 					);
 				}
+				break;
+			case 'setResourceFolderAtlas':
 				break;
 			case 'setResourceExported':
 				validateTouchedResourceKind(project, operations, operationIndex, operation.selector, `${operationPath}.selector.resourceId`, issues, operation.kind);
@@ -3158,6 +3317,20 @@ function collectProjectedResourceReferenceIssues(project: UamProject): Projected
 				resource.component.properties.sound,
 				['sound'],
 			);
+			pushMissingUi(
+				`${pkg.id}/${resource.id}/properties/designImage`,
+				`${componentPath}.properties.designImage`,
+				resource.component.properties.designImage,
+				['image'],
+			);
+			for (const field of ['showSound', 'hideSound'] as const) {
+				pushMissingUi(
+					`${pkg.id}/${resource.id}/properties/${field}`,
+					`${componentPath}.properties.${field}`,
+					resource.component.properties[field],
+					['sound'],
+				);
+			}
 			for (const node of resource.component.displayList) {
 				const nodeKey = `${pkg.id}/${resource.id}/${node.id}`;
 				const nodePath = `packages.${pkg.id}.resources.${resource.id}.component.displayList.${node.id}`;
@@ -3228,6 +3401,11 @@ function collectProjectedResourceReferenceIssues(project: UamProject): Projected
 					}
 					if (instance.extensionType === 'Button') {
 						pushMissingUi(`${nodeKey}/instance/selectedIcon`, `${nodePath}.instanceProperties.selectedIcon`, instance.selectedIcon, visualKinds);
+					}
+					if (instance.extensionType === 'Button'
+						|| instance.extensionType === 'Label'
+						|| instance.extensionType === 'ComboBox'
+						|| instance.extensionType === 'ProgressBar') {
 						pushMissingUi(`${nodeKey}/instance/sound`, `${nodePath}.instanceProperties.sound`, instance.sound, ['sound']);
 					}
 					if (instance.extensionType === 'ComboBox') {
@@ -3316,6 +3494,14 @@ function validateProjectedState(
 		operations.some(isLifecycleOperation)
 		|| operations.some(isResourceLifecycleOperation)
 		|| operations.some(isDisplayListRewriteOperation)
+		|| operations.some((operation) => (
+			operation.kind === 'setDisplayNodeProps'
+			&& operation.props.componentInstanceProperties !== undefined
+		))
+		|| operations.some((operation) => (
+			operation.kind === 'setComponentProps'
+			&& operation.props.properties !== undefined
+		))
 	) {
 		const baselineReferenceKeys = new Set(collectProjectedResourceReferenceIssues(normalizeUamProject(project))
 			.map((issue) => issue.key));

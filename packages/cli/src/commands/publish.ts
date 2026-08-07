@@ -1,9 +1,9 @@
-import type { Command } from 'commander';
+import path from 'node:path';
 import { NodeIO } from '@openfairygui/core/node';
 import { resolvePublishOptions } from '@openfairygui/functions';
 import { publishNode, loadPlugins } from '@openfairygui/functions/node';
 import type { LoadedPlugin } from '@openfairygui/functions';
-import path from 'node:path';
+import type { Command } from 'commander';
 import { resolveFairyPath } from '../utils/project-input.js';
 import { parseProjectType } from '../utils/project-type.js';
 
@@ -51,6 +51,7 @@ export function registerPublishCommand(program: Command): void {
 			const resolved = resolvePublishOptions(doc, {
 				compressed: options.compressed,
 				packages: pkgFilter,
+				targetProjectType: projectType,
 			});
 
 			console.log(`Settings: ext=${resolved.fileExtension}, compressed=${resolved.compressed}`);

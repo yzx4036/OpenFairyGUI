@@ -1,12 +1,16 @@
 # OpenFairyGUI
 
-[![Documentation](https://img.shields.io/badge/docs-online-0f766e.svg)](https://fairygui.dev/)
+<p align="center"><img src="./docs/public/logo.svg" alt="OpenFairyGUI logo" width="160"></p>
+
+[![Documentation](https://img.shields.io/badge/docs-online-0f766e.svg)](https://fairygui.dev/en/)
 [![npm](https://img.shields.io/badge/npm-%40openfairygui%2Fcore-cb3837.svg)](https://www.npmjs.com/package/@openfairygui/core)
 [![License](https://img.shields.io/badge/license-MIT-007ec6.svg)](./LICENSE)
 
-[中文](./README.md) · [Documentation](https://fairygui.dev/) · [Getting Started](https://fairygui.dev/guide/getting-started) · [API Reference](https://fairygui.dev/api/)
+[中文](./README.md) · [Documentation](https://fairygui.dev/en/) · [Getting Started](https://fairygui.dev/en/guide/getting-started) · [API Reference](https://fairygui.dev/api/) · [Changelog](./CHANGELOG.md)
 
 > Read, modify, and publish FairyGUI projects with TypeScript for scripts, CI/CD, and agent tooling.
+
+> **Relationship to FairyGUI:** OpenFairyGUI is an unofficial open-source project built around FairyGUI project formats and tooling; it is not an official FairyGUI product. The FairyGUI name, logo, and related brand assets belong to their respective owners. For official products and information, visit the [FairyGUI website](https://fairygui.com/).
 
 ## What is OpenFairyGUI?
 
@@ -57,7 +61,7 @@ await publishNode({
 });
 ```
 
-See [Getting Started](https://fairygui.dev/guide/getting-started) for project writeback, Web entrypoints, and UAM examples.
+See [Getting Started](https://fairygui.dev/en/guide/getting-started) for project writeback, Web entrypoints, and UAM examples.
 
 ## Command line
 
@@ -80,27 +84,35 @@ Run `ofgui --help` for all commands and options.
 | [`@openfairygui/cli`](https://www.npmjs.com/package/@openfairygui/cli) | Command-line tools |
 | [`@openfairygui/mcp`](https://www.npmjs.com/package/@openfairygui/mcp) | Thin MCP adapter for the backend runtime |
 
-See [Packages and Tools](https://fairygui.dev/guide/packages) for package entrypoints and Node / Web boundaries.
+See [Packages and Tools](https://fairygui.dev/en/guide/packages) for package entrypoints and Node / Web boundaries.
+
+## Recommended Project
+
+### FairyGUI Editor Online
+
+[FairyGUI Editor Online](https://editor.fairygui.dev/) is a browser-based FairyGUI project editor built on OpenFairyGUI. It imports projects from local folders or ZIP files and supports editing, saving, publishing, and previewing directly in the browser.
+
+[Try it online](https://editor.fairygui.dev/) · [GitHub repository](https://github.com/OpenFairyGUI/FairyGUI-Editor-Online)
 
 ## Documentation
 
-- [Getting Started](https://fairygui.dev/guide/getting-started)
+- [Getting Started](https://fairygui.dev/en/guide/getting-started)
 - [API Reference](https://fairygui.dev/api/)
-- [Architecture and Package Boundaries](./docs/architecture-overview.md)
-- [Editor Publish Settings](./docs/editor-publish-settings.md)
-- [Project XML Attribute Protocol](./docs/project-xml-attribute-reference.md)
-- [FairyGUI Binary Package Format](./docs/fairygui-binary-package-format.md)
-- [All Documentation](./docs/README.md)
+- [Architecture and Package Boundaries](./docs/en/architecture-overview.md)
+- [Editor Publish Settings](./docs/en/editor-publish-settings.md)
+- [Project XML Attribute Protocol](./docs/en/project-xml-attribute-reference.md)
+- [FairyGUI Binary Package Format](./docs/en/fairygui-binary-package-format.md)
+- [All Documentation](./docs/en/README.md)
 
 ## Status and boundaries
 
-The project is currently in the `0.2.0` alpha series. APIs may still change before the stable release.
+The project currently maintains a stable `0.2.x` line and a `0.3.x` prerelease line. The 0.x APIs may continue to evolve; see the [Changelog](./CHANGELOG.md) for version changes.
 
 - Node.js automation is the primary workflow; browser hosts use explicit `/web` entrypoints and injected capabilities.
 - UAM writeback is rejected when the project cannot be preserved faithfully, preventing silent source overwrites.
 - `restore` is limited to trusted local publish artifacts and is not a normal authoring workflow.
 
-The [documentation site](https://fairygui.dev/) defines the current implementation boundaries.
+The [documentation site](https://fairygui.dev/en/) defines the current implementation boundaries.
 
 ## Local development
 

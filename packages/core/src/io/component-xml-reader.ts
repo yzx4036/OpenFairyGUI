@@ -1,6 +1,6 @@
 import { ControllerActionType } from '../constants.js';
 import type { Component } from '../properties/component.js';
-import type { Controller } from '../properties/controller.js';
+import type { Controller, ControllerHomePageType } from '../properties/controller.js';
 import {
 	ensureArray,
 	parseBool,
@@ -47,6 +47,8 @@ const EXTENSION_TYPE_MAP: Record<string, string> = {
 	Slider: 'GSlider',
 	ScrollBar: 'GScrollBar',
 };
+
+const CONTROLLER_HOME_PAGE_TYPES = new Set<ControllerHomePageType>(['default', 'specific', 'branch', 'variable']);
 
 const EXTENSION_PROTOCOL_MAP = {
 	Button: PROJECT_XML_PROTOCOL.buttonExtension,
@@ -374,6 +376,10 @@ export function readComponentXml(ctx: ReaderContext, comp: Component, xmlContent
 		if (bgColor !== undefined) comp.setBgColor?.(bgColor);
 		const bgColorEnabled = readXmlAttr<string | boolean>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.bgColorEnabled);
 		if (bgColorEnabled !== undefined) comp.setBgColorEnabled?.(parseBool(bgColorEnabled));
+		const designImage = readXmlAttr<string>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImage);
+		if (designImage !== undefined) comp.setDesignImage?.(designImage);
+		const designImageForTest = readXmlAttr<string | boolean>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageForTest);
+		if (designImageForTest !== undefined) comp.setDesignImageForTest?.(parseBool(designImageForTest));
 		const designImageAlpha = readXmlAttr<string | number>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageAlpha);
 		if (designImageAlpha !== undefined) comp.setDesignImageAlpha?.(parseInt2(designImageAlpha));
 		const designImageLayer = readXmlAttr<string | number>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.designImageLayer);
@@ -388,6 +394,12 @@ export function readComponentXml(ctx: ReaderContext, comp: Component, xmlContent
 		if (initName !== undefined) comp.setInitName?.(initName);
 		const remark = readXmlAttr<string>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.remark);
 		if (remark !== undefined) comp.setRemark?.(remark);
+		const pageController = readXmlAttr<string>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.pageController);
+		if (pageController !== undefined) comp.setPageController?.(pageController);
+		const showSound = readXmlAttr<string>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.showSound);
+		if (showSound !== undefined) comp.setAddedToStageSound?.(showSound);
+		const hideSound = readXmlAttr<string>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.hideSound);
+		if (hideSound !== undefined) comp.setRemovedFromStageSound?.(hideSound);
 
 		// Clip softness
 		const clipSoftness = readXmlAttr<string>(compNode, PROJECT_XML_PROTOCOL.componentRoot.attrs.clipSoftness);
@@ -468,7 +480,7 @@ export function readComponentXml(ctx: ReaderContext, comp: Component, xmlContent
 							case 'Button':
 								if (readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.mode) !== undefined) comp.setButtonMode?.(parseButtonMode(readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.mode)!));
 								if (readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.sound) !== undefined) comp.setSound?.(String(readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.sound)));
-								if (readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.soundVolumeScale) !== undefined) comp.setSoundVolumeScale?.(parseFloat2(readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.soundVolumeScale), 1));
+								if (readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.soundVolumeScale) !== undefined) comp.setSoundVolumeScale?.(parseFloat2(readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.soundVolumeScale), 100) / 100);
 								if (readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.downEffect) !== undefined) comp.setDownEffect?.(parseInt2(readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.downEffect)));
 								if (readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.downEffectValue) !== undefined) comp.setDownEffectValue?.(parseFloat2(readXmlAttr(extAttrs, EXTENSION_PROTOCOL_MAP.Button.attrs.downEffectValue), 0.8));
 								break;
@@ -503,7 +515,7 @@ export function readComponentXml(ctx: ReaderContext, comp: Component, xmlContent
 
 		const customPropertyChildName = getProtocolChildName(PROJECT_XML_PROTOCOL.componentRoot, 'customProperty');
 		const customProperties = customPropertyChildName ? ensureArray(compNode[customPropertyChildName]) : [];
-		const customPropertyProtocol = PROJECT_XML_PROTOCOL.componentRoot.children?.customProperty;
+		const customPropertyProtocol = PROJECT_XML_PROTOCOL.componentRoot.children!.customProperty!;
 		comp.setCustomProperties(customProperties.flatMap((value) => {
 			const property = getXmlNode<CustomPropertyXmlNode>(value);
 			const propertyId = property
@@ -526,7 +538,17 @@ export function readComponentXml(ctx: ReaderContext, comp: Component, xmlContent
 			const ctrlName = readXmlAttr<string>(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.name) ?? '';
 			const ctrl = doc.createController(ctrlName);
 			const selected = readXmlAttr<string | number>(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.selected);
-			ctrl.setSelectedIndex(parseInt2(selected));
+			const homePageType = readXmlAttr<string>(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.homePageType) ?? 'default';
+			if (!CONTROLLER_HOME_PAGE_TYPES.has(homePageType as ControllerHomePageType)) {
+				throw new Error(`Controller "${ctrlName}" has unsupported homePageType "${homePageType}".`);
+			}
+			ctrl
+				.setSelectedIndex(parseInt2(selected))
+				.setAlias(readXmlAttr<string>(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.alias) ?? '')
+				.setAutoRadioGroupDepth(parseBool(readXmlAttr(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.autoRadioGroupDepth)))
+				.setExported(parseBool(readXmlAttr(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.exported)))
+				.setHomePageType(homePageType as ControllerHomePageType)
+				.setHomePage(readXmlAttr<string>(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.homePage) ?? '');
 
 			// Parse pages: "0,up,1,down,2,over" → [{id:"0",name:"up"}, ...]
 			const pagesAttr = readXmlAttr<string>(ctrlDef, PROJECT_XML_PROTOCOL.controller.attrs.pages) ?? '';

@@ -29,6 +29,8 @@ export interface BackendSessionState {
 	sessionLock: BackendSessionLock | null;
 	fileSystem?: BackendFileSystem;
 	project: import('@openfairygui/core/uam').UamProject;
+	readDiagnostics: import('@openfairygui/core').ProjectDiagnostic[];
+	readComplete: boolean;
 	uamFidelity: 'full' | 'unsupported';
 	revision: number;
 	lastSavedRevision: number;
@@ -46,6 +48,7 @@ export interface BackendSessionState {
 export interface BackendContext {
 	fileSystem?: BackendFileSystem;
 	host?: BackendHostAdapter;
+	allowedProjectRoots?: readonly string[];
 	capabilities: BackendCapabilities;
 	sessions: Map<string, BackendSessionState>;
 	sessionsByPath: Map<string, string>;

@@ -753,6 +753,9 @@ test('binary round-trip: compressed output works', async (t) => {
 
 	try {
 		await io.writeBinary(doc, outPath, { compressed: true });
+		await t.throwsAsync(io.readBinary(outPath, { limits: { maxDecompressedBytes: 1 } }), {
+			message: /decompressed data exceeds the configured 1 byte budget/,
+		});
 
 		const doc2 = await io.readBinary(outPath);
 		const pkg1 = doc.getRoot().listPackages()[0];
@@ -1031,6 +1034,9 @@ test('binary writer: font glyphs round-trip as formal properties', async (t) => 
 		.setAdvance(25)
 		.setChannel(15);
 	font.addGlyph(glyphB);
+	const glyphC = doc.createFontGlyph('font001_36753');
+	glyphC.setCharId(36753).setChar('辑').setImg('glyph_c').setAdvance(26);
+	font.addGlyph(glyphC);
 
 	pkg.addResource(font);
 
@@ -1071,6 +1077,7 @@ test('binary writer: font glyphs round-trip as formal properties', async (t) => 
 			[
 				{ charId: 65, char: 'A', img: 'glyph_a', x: 1, y: 2, xOffset: 3, yOffset: 4, width: 20, height: 21, advance: 22, channel: 1 },
 				{ charId: 66, char: 'B', img: '', x: 5, y: 6, xOffset: 7, yOffset: 8, width: 23, height: 24, advance: 25, channel: 15 },
+				{ charId: 36753, char: '辑', img: 'glyph_c', x: 0, y: 0, xOffset: 0, yOffset: 0, width: 0, height: 0, advance: 26, channel: 0 },
 			],
 		);
 	} finally {
@@ -1078,7 +1085,7 @@ test('binary writer: font glyphs round-trip as formal properties', async (t) => 
 	}
 });
 
-test('binary writer: misc/spine/dragonbones resources round-trip as formal package resources', async (t) => {
+test('binary writer: misc/swf/spine/dragonbones resources round-trip as formal package resources', async (t) => {
 	const doc = new Document();
 	const pkg = doc.createPackage('LoaderPkg');
 	pkg.setId('loader001');
@@ -1086,6 +1093,10 @@ test('binary writer: misc/spine/dragonbones resources round-trip as formal packa
 	const misc = doc.createMiscResource('alien-pma');
 	misc.setId('misc001').setPath('/images/').setFile('alien-pma.atlas').setExported(true);
 	pkg.addResource(misc);
+
+	const swf = doc.createSwfResource('movie');
+	swf.setId('swf001').setPath('/movies/').setFile('movie.swf').setExported(true);
+	pkg.addResource(swf);
 
 	const spine = doc.createSpineResource('alien-pro');
 	spine
@@ -1124,13 +1135,14 @@ test('binary writer: misc/spine/dragonbones resources round-trip as formal packa
 		const items = readPackageItems(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 		t.deepEqual(
 			items
-				.filter((item) => item.id === 'misc001' || item.id === 'spine001' || item.id === 'dragon001')
+				.filter((item) => item.id === 'misc001' || item.id === 'swf001' || item.id === 'spine001' || item.id === 'dragon001')
 				.sort((a, b) => (a.id ?? '').localeCompare(b.id ?? ''))
 				.map((item) => ({ type: item.type, id: item.id, file: item.file })),
 			[
 				{ type: 10, id: 'dragon001', file: 'dragon_ske.json' },
 				{ type: 7, id: 'misc001', file: 'alien-pma.atlas' },
 				{ type: 9, id: 'spine001', file: 'alien-pro.skel' },
+				{ type: 6, id: 'swf001', file: 'movie.swf' },
 			],
 		);
 
@@ -1142,6 +1154,10 @@ test('binary writer: misc/spine/dragonbones resources round-trip as formal packa
 		t.truthy(misc2, 'misc resource exists');
 		t.is(misc2.propertyType, PropertyType.MISC_RESOURCE);
 		t.is(misc2.getFile?.(), 'alien-pma.atlas');
+
+		const swf2 = pkg2!.listResources().find((resource) => resource.getId?.() === 'swf001') as any;
+		t.is(swf2.propertyType, PropertyType.SWF_RESOURCE);
+		t.is(swf2.getFile?.(), 'movie.swf');
 
 		const spine2 = pkg2!.listResources().find((resource) => resource.getId?.() === 'spine001') as any;
 		t.truthy(spine2, 'spine resource exists');
@@ -1318,6 +1334,113 @@ test('binary writer: image high-resolution item ids round-trip as formal propert
 	}
 });
 
+test('binary writer: image tile-grid and component property overrides round-trip', async (t) => {
+	const doc = new Document();
+	const pkg = doc.createPackage('ProtocolPkg');
+	pkg.setId('protocol01');
+
+	const image = doc.createImageResource('panel.png');
+	image
+		.setId('panel01')
+		.setWidth(40)
+		.setHeight(40)
+		.setScaleOption(1)
+		.setScale9Grid([4, 4, 32, 32])
+		.setTileGridIndice(5);
+	pkg.addResource(image);
+
+	const component = doc.createComponent('Host');
+	component.setId('host01').setSize(100, 100);
+	const instance = doc.createGComponent('instance');
+	instance.setId('instance').setPropertyOverrides([
+		{ target: 'icon', propertyId: 1, value: 'ui://protocol01/panel01' },
+	]);
+	component.addChild(instance);
+	const list = doc.createGList('list');
+	list.setId('list').setListItems([{
+		title: 'Item',
+		icon: null,
+		url: null,
+		name: null,
+		selectedTitle: null,
+		selectedIcon: null,
+		level: 0,
+		isFolder: null,
+		propertyOverrides: [{ target: 'label', propertyId: 0, value: 'Overridden' }],
+	}]);
+	component.addChild(list);
+	pkg.addResource(component);
+
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-bw-'));
+	const outPath = path.join(tmpDir, 'protocol.bytes');
+	try {
+		await io.writeBinary(doc, outPath);
+		const roundTripped = await io.readBinary(outPath);
+		const decodedPackage = roundTripped.getRoot().getPackage('ProtocolPkg')!;
+		const decodedImage = decodedPackage.listResources().find((resource) => resource.getId() === 'panel01') as any;
+		const decodedComponent = decodedPackage.listResources().find((resource) => resource.getId() === 'host01') as any;
+		const decodedInstance = decodedComponent.listChildren().find((child: any) => child.getId() === 'instance');
+		const decodedList = decodedComponent.listChildren().find((child: any) => child.getId() === 'list');
+
+		t.is(decodedImage.getTileGridIndice(), 5);
+		t.deepEqual(decodedInstance.getPropertyOverrides(), [
+			{ target: 'icon', propertyId: 1, value: 'ui://protocol01/panel01' },
+		]);
+		t.deepEqual(decodedList.getListItems()[0]?.propertyOverrides, [
+			{ target: 'label', propertyId: 0, value: 'Overridden' },
+		]);
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('binary writer: publish-clear flags remove runtime-only initial content', async (t) => {
+	const doc = new Document();
+	const pkg = doc.createPackage('ClearPkg');
+	pkg.setId('clearpkg1');
+	const component = doc.createComponent('Main');
+	component.setId('main01').setSize(100, 100);
+
+	const text = doc.createGTextField('text');
+	text.setId('text').setText('secret').setAutoClearText(true);
+	component.addChild(text);
+	const loader = doc.createGLoader('loader');
+	loader.setId('loader').setUrl('ui://clearpkg1/image01').setClearOnPublish(true).setShowErrorSign(true);
+	component.addChild(loader);
+	const list = doc.createGList('list');
+	list.setId('list').setAutoClearItems(true).setListItems([{
+		title: 'secret', selectedTitle: null, icon: null, selectedIcon: null, url: null,
+		name: null, level: 0, isFolder: null,
+	}]);
+	component.addChild(list);
+	const combo = doc.createGComponent('combo');
+	combo
+		.setId('combo')
+		.setInstanceExtType('ComboBox')
+		.setInstanceAutoClearItems(true)
+		.setInstanceComboItems([{ title: 'secret', value: '1', icon: null }]);
+	component.addChild(combo);
+	pkg.addResource(component);
+
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-clear-'));
+	const outPath = path.join(tmpDir, 'clear.bytes');
+	try {
+		await io.writeBinary(doc, outPath);
+		const decoded = await io.readBinary(outPath);
+		const main = decoded.getRoot().getPackage('ClearPkg')?.getComponent('Main');
+		const byId = new Map(main?.listChildren().map((child) => [child.getId(), child as any]));
+		t.is(byId.get('text')?.getText?.(), '');
+		t.is(byId.get('loader')?.getUrl?.(), '');
+		t.true(byId.get('loader')?.getShowErrorSign?.());
+		t.deepEqual(byId.get('list')?.getListItems?.(), []);
+		t.deepEqual(byId.get('combo')?.getInstanceComboItems?.(), []);
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
 test('binary writer: sprite originalSize is only emitted for rotated, trimmed, or zero-sized package sprites', async (t) => {
 	const doc = new Document();
 	const pkg = doc.createPackage('SpritePkg');
@@ -1334,6 +1457,10 @@ test('binary writer: sprite originalSize is only emitted for rotated, trimmed, o
 	const zero = doc.createImageResource('zero.png');
 	zero.setId('zero01').setWidth(66).setHeight(44);
 	pkg.addResource(zero);
+
+	const edgeTrimmed = doc.createImageResource('edge-trimmed.png');
+	edgeTrimmed.setId('edge01').setWidth(20).setHeight(20);
+	pkg.addResource(edgeTrimmed);
 
 	const atlas = doc.createAtlas('atlas0');
 	atlas.setFile('atlas0.png').setIndex(0);
@@ -1361,6 +1488,13 @@ test('binary writer: sprite originalSize is only emitted for rotated, trimmed, o
 	zeroSprite.setOriginalWidth(66).setOriginalHeight(44);
 	atlas.addSprite(zeroSprite);
 
+	const edgeTrimmedSprite = doc.createSprite('edge01');
+	edgeTrimmedSprite.setItemId('edge01');
+	edgeTrimmedSprite.setAtlas(atlas);
+	edgeTrimmedSprite.setRectX(52).setRectY(44).setRectWidth(10).setRectHeight(10);
+	edgeTrimmedSprite.setOriginalWidth(20).setOriginalHeight(20);
+	atlas.addSprite(edgeTrimmedSprite);
+
 	const frameSprite = doc.createSprite('plain01_0');
 	frameSprite.setItemId('plain01_0');
 	frameSprite.setAtlas(atlas);
@@ -1382,6 +1516,7 @@ test('binary writer: sprite originalSize is only emitted for rotated, trimmed, o
 		t.is(byId.get('plain01')?.extra, null, 'plain untrimmed sprite omits originalSize payload');
 		t.deepEqual(byId.get('rot01')?.extra, { ox: 0, oy: 0, ow: 40, oh: 20 }, 'rotated sprite keeps originalSize payload');
 		t.deepEqual(byId.get('zero01')?.extra, { ox: 0, oy: 0, ow: 66, oh: 44 }, 'zero-sized package sprite keeps originalSize payload');
+		t.deepEqual(byId.get('edge01')?.extra, { ox: 0, oy: 0, ow: 20, oh: 20 }, 'right/bottom-only trim keeps originalSize payload');
 		t.is(byId.get('plain01_0')?.extra, null, 'generated rotated frame sprite omits originalSize payload without trim offsets');
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
@@ -2036,6 +2171,37 @@ test('binary writer: component child blocks round-trip into formal child propert
 		await t.throwsAsync(() => io.writeBinary(doc, outPath), { message: /unsupported filter "blur"/ });
 		image.setFilter('').setBlendMode('overlay');
 		await t.throwsAsync(() => io.writeBinary(doc, outPath), { message: /unsupported blend mode "overlay"/ });
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('binary writer re-encodes a decoded component after graph edits', async (t) => {
+	const source = new Document();
+	const pkg = source.createPackage('DirtyPkg').setId('dirtypkg');
+	const component = source.createComponent('Main').setId('main').setSize(100, 80);
+	const child = source.createGTextField('title').setId('title').setText('before');
+	component.addChild(child);
+	pkg.addResource(component);
+
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-binary-dirty-'));
+	const sourcePath = path.join(tmpDir, 'source.bytes');
+	const editedPath = path.join(tmpDir, 'edited.bytes');
+	try {
+		await io.writeBinary(source, sourcePath);
+		const decoded = await io.readBinary(sourcePath);
+		const decodedComponent = decoded.getRoot().getPackage('DirtyPkg')?.getComponent('Main');
+		t.truthy(decodedComponent);
+		decodedComponent?.setSize(320, 240);
+		decodedComponent?.getChild('title')?.setName('edited-title');
+
+		await io.writeBinary(decoded, editedPath);
+		const roundTripped = await io.readBinary(editedPath);
+		const edited = roundTripped.getRoot().getPackage('DirtyPkg')?.getComponent('Main');
+		t.is(edited?.getWidth(), 320);
+		t.is(edited?.getHeight(), 240);
+		t.truthy(edited?.getChild('edited-title'));
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}

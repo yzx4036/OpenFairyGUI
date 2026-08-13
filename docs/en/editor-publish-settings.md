@@ -95,7 +95,7 @@ Notes:
 
 When an `image` resource in `package.xml` points to an `.svg` file and declares positive `width` and `height`, publishing rasterizes it at those declared dimensions before optional trimming and atlas composition. The output contains only PNG atlases, while the sprite's original dimensions remain the project-declared values.
 
-Browser publishing rejects SVG with scripts, event attributes, external resource references, DTD/entities, styles, or dimensions and complexity beyond the defined limits before rasterization. If `createImageBitmap` cannot decode a validated SVG, it falls back to `HTMLImageElement` with a Blob URL; the Blob URL is released on both success and failure paths. Publishing fails without writing output when the host has no usable DOM image-decoding capability.
+Before rasterization, browser publishing uses the same structured XML validation as UAM source validation and rejects SVG with scripts, event attributes, external resource references, DTD/entities, styles, non-standard namespaces or prefixed elements, or dimensions and complexity beyond the defined limits. If `createImageBitmap` cannot decode a validated SVG, it falls back to `HTMLImageElement` with a Blob URL; the Blob URL is released on both success and failure paths. Publishing fails without writing output when the host has no usable DOM image-decoding capability.
 
 ## Actual package-level publish properties
 
@@ -127,6 +127,8 @@ Notes:
 
 Component root extensions, ComboBox component instances, and List/Tree display nodes use the formal boolean `autoClearItems` property. Its default is `false`, and it is written only when enabled. Ordered `<property target="..." propertyId="..." value="..."/>` children for component instances and static list items are stored in formal UAM properties. Reads, materialization, saves, and reloads preserve their original order and raw string values, including leading/trailing whitespace, whitespace-only values, and empty strings. `target` must be non-empty, `propertyId` must be a non-negative safe integer, and `value` must be present; invalid input is rejected before materialization or write-back.
 
+List/Tree `autoItemSize` defaults by layout: `true` for single column/row and `false` for flow/pagination, and it is written only when it differs from that layout default. Button root extensions store `downEffect` with the `none / dark / scale` string enum. Transitions store non-24 frame rates in `frameRate`.
+
 ## Integer geometry fields in component XML
 
 Geometry values that the FairyGUI desktop editor reads as signed 32-bit integers are truncated toward zero when written to Project XML. Non-finite values and values outside `-2147483648` to `2147483647` after truncation are rejected.
@@ -142,7 +144,7 @@ Integer geometry fields include:
 
 ## Project resource-tree metadata
 
-Component and asset resource nodes in `package.xml` and `package_branch.xml` use `exported="true"` and `favorite="true"` to store export and favorite state. The corresponding attribute is omitted when disabled. UAM stores these values as `resource.exported` and `resource.favorite`; public transactions set the target Boolean idempotently through `setResourceExported` and `setResourceFavorite`.
+Component and asset resource nodes in `package.xml` and `package_branch.xml` use `exported="true"` and `favorite="true"` to store export and favorite state. The corresponding attribute is omitted when disabled. SWF uses the formal `SwfResource` model for `<swf>` nodes, and the UAM `swf` resource preserves its source file, export state, and favorite state. UAM stores these values as `resource.exported` and `resource.favorite`; public transactions set the target Boolean idempotently through `setResourceExported` and `setResourceFavorite`.
 
 Each package records its own resource branches in the formal ordered `branchNames` list, persisted as the same-named JSON-array attribute on the `package.xml` root. Project reads use that order to establish mappings; binary publishing uses the same order to define that package's `branchItemIds` slots and must not derive them again from root project branch order. Document calls that do not explicitly set a package-local table derive it from actual branch resources in project branch order before publishing.
 
@@ -162,7 +164,7 @@ Image-resource attributes in `package.xml` and `package_branch.xml` are represen
 
 Updating image source bytes through `replaceResourceBytes` currently supports PNG and common 8-bit Huffman JPEG only. Preflight checks PNG chunk CRCs, zlib/scanline boundaries, and container order. For JPEG it checks quantization/Huffman tables, frame/scan order, and encoding constraints and also completes pixel decoding. Both paths compare the actual format with the filename extension at operation time and in the final state. Malformed or mismatched data returns `invalid_resource_bytes`; unsupported formats such as SVG, WebP, GIF, PSD, and TGA return `unsupported_resource_mutation`. The browser backend performs the same strict validation through `applyUamTransactionAsync` in the packaged Web Worker. Calling the synchronous entry in a browser is rejected immediately rather than scanning or decoding on the main thread. Consumer bundlers must package the public `@openfairygui/core/image-validation-worker` entry as a self-contained ESM `image-validation-worker.js` beside the main bundle; rebundling only the main entry or merely copying the worker file omits its decoder chunks. An unresponsive worker is terminated after ten seconds. Browser source input is limited to 8 MiB and decoded raster size to 8,388,608 pixels. Node/CLI synchronous validation limits source and decoded PNG bytes to 128 MiB; strict JPEG decoding is additionally limited to 8,388,608 pixels and 64 MiB.
 
-A valid replacement derives new raster width and height from the bytes and projects them atomically into UAM and Document in the same in-memory transaction. A later save still uses the existing multi-file write-back and does not promise filesystem-level `atomicSave`. When `hydrateResourceBytes` is requested, `ProjectReader` replaces stale XML dimensions from a parseable PNG IHDR or JPEG SOF header with valid fields. It does not scan the complete container or repeat pixel decoding during batch hydration; SVG continues to use project-declared dimensions.
+A valid replacement derives new raster width and height from the bytes and projects them atomically into UAM and Document in the same in-memory transaction. A later Node Backend save writes the complete project in a sibling staging directory and switches directories only after every write succeeds. Browser storage provides equivalent filesystem atomicity only when its adapter supplies `runProjectWriteTransaction`. When `hydrateResourceBytes` is requested, `ProjectReader` replaces stale XML dimensions from a parseable PNG IHDR or JPEG SOF header with valid fields. It does not scan the complete container or repeat pixel decoding during batch hydration; SVG continues to use project-declared dimensions.
 
 ## Project MovieClip properties and JTA transactions
 
@@ -194,11 +196,11 @@ These are OpenFairyGUI's current execution boundaries, not new editor setting fi
 | Images or animation frames need packing | A raster encoder, source-resource path, and atlas output directory are required |
 | Atlas packing, image reads, or composition fail | Publishing aborts instead of returning a successful result with transparent holes or missing pages |
 | The publish set contains a MovieClip | Reads mixed PNG/JPEG textures through the JTA length table. Duplicate texture indices reuse the first referenced frame's sprite, and `-1` means an empty frame. All selected packages finish JTA parsing, strict PNG/JPEG validation, complete decoding of referenced textures, and normalized caching before any built-in OpenFairyGUI output directory or file is created. Out-of-range indices, referenced empty textures, unsupported formats, truncated data, or decode failure abort the entire publish. |
-| Copying a `SoundResource`, `MiscResource`, `SpineResource`, `DragonBonesResource`, or one of their dependencies fails | Publishing aborts instead of downgrading a missing runtime resource to a warning |
+| Copying a `SoundResource`, `MiscResource`, `SwfResource`, `SpineResource`, `DragonBonesResource`, or one of their dependencies fails | Publishing aborts instead of downgrading a missing runtime resource to a warning |
 
 When no output directory is requested, low-level `publish()` may calculate layout only. That is not a file publish and writes no binary or resource files. Standard Node workflows should use `publishNode()`.
 
-The zero-output guarantee covers only built-in OpenFairyGUI sound, external-resource, atlas, package-binary, and code-generation output. A Node `onPublishStart` plugin runs before built-in preflight and can perform side effects through the host filesystem; those writes are not staged or rolled back automatically. Plugins requiring zero side effects should defer writes until `onPublishEnd` or implement their own staging and commit policy.
+When the standard Node adapter receives an explicit `output`, it copies that directory to a sibling staging directory and commits it with a directory switch only after the complete publish succeeds. The original output remains unchanged if built-in runtime output or `onPublishEnd` fails. Multiple output directories resolved from project/package settings, custom low-level filesystems, code generation outside the output directory, and plugin side effects through `basePath` or other paths remain outside this directory-level guarantee and require host- or plugin-owned staging and rollback.
 
 ## Current code-generation scope
 
@@ -293,6 +295,8 @@ The current OpenFairyGUI implementation of `fileExtension` does not reproduce th
 - atlas rotation is disabled so the output remains consumable by the current FairyGUI-Layabox runtime
 
 Layabox-supported settings such as `includeHighResolution`, compression, atlas size, paging, and trimming remain project-configured. Without `--project-type`, the project-setting rules in the table above remain unchanged.
+
+The Unity and Cocos Creator runtimes do not inflate binary descriptors, so those targets always emit uncompressed data. An explicit API or CLI request for `compressed=true` / `--compressed` fails publishing, and persisted `compressDesc` cannot override this target constraint. Layabox continues to use the project's compression setting.
 
 The non-Unity binary publish contracts formally covered by the repository include:
 

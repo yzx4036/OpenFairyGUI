@@ -5,6 +5,7 @@ import {
 	type FileSystem,
 	type MovieClipResource,
 	type Package,
+	ProjectType,
 	type Transform,
 } from '@openfairygui/core';
 import { atlas } from './atlas.js';
@@ -12,7 +13,7 @@ import { prepareMovieClipResource } from './atlas/inputs.js';
 import type { PreparedJtaData } from './atlas/jta.js';
 import { publishCodeGeneration, resolveProjectBasePath } from './codegen.js';
 import { dirname, isAbsolutePathLike, trimTrailingSlashes } from './path-utils.js';
-import { formatPluginError, type LoadedPlugin } from './plugins/types.js';
+import { formatPluginError, type LoadedPlugin, shouldAbortPluginFailure } from './plugins/types.js';
 import type { PublishFileSystem } from './publish/contracts.js';
 import {
 	annotatePackagePublishArtifacts,
@@ -74,7 +75,9 @@ async function runPublishPluginHook(
 		try {
 			await fn(doc, options);
 		} catch (error) {
-			logger.warn(`publish: Plugin "${plugin.name}" ${hook} failed: ${formatPluginError(error)}`);
+			const message = `publish: Plugin "${plugin.name}" ${hook} failed: ${formatPluginError(error)}`;
+			if (shouldAbortPluginFailure(plugin)) throw new Error(message);
+			logger.warn(message);
 		}
 	}
 }
@@ -194,6 +197,26 @@ export function publish(options: PublishOptions): Transform {
 				}
 			}
 			const publishName = pkg.getPublishName() || pkg.getName();
+			const sourceAtlas = pkg.getSourceAtlasSettings();
+			const usePackageAtlas = !sourceAtlas.useGlobal;
+			const atlas: ResolvedPublishAtlasOptions = {
+				...config.atlas,
+				maxSize: options.atlas?.maxSize ?? (usePackageAtlas ? sourceAtlas.maxSize : config.atlas.maxSize),
+				allowRotation: config.projectType === ProjectType.LayaBox
+					? false
+					: (options.atlas?.allowRotation ?? (usePackageAtlas ? sourceAtlas.allowRotation : config.atlas.allowRotation)),
+				powerOfTwo: options.atlas?.powerOfTwo
+					?? (usePackageAtlas ? sourceAtlas.sizeOption === 'pot' : config.atlas.powerOfTwo),
+				maxAtlasIndex: options.atlas?.maxAtlasIndex ?? sourceAtlas.maxIndex,
+				multipleOfFour: options.atlas?.multipleOfFour
+					?? (usePackageAtlas ? sourceAtlas.sizeOption === 'mof' : config.atlas.multipleOfFour),
+				square: options.atlas?.square ?? (usePackageAtlas ? sourceAtlas.forceSquare : config.atlas.square),
+				multiPage: options.atlas?.multiPage ?? (usePackageAtlas ? sourceAtlas.paging : config.atlas.multiPage),
+				extractAlpha: config.projectType === ProjectType.Unity && (
+					options.atlas?.extractAlpha
+					?? (usePackageAtlas || sourceAtlas.extractAlpha ? sourceAtlas.extractAlpha : config.atlas.extractAlpha)
+				),
+			};
 
 			// Unity (bytes) format: nest inside {PkgName}/ subfolder.
 			if (outputDir && config.fileExtension === 'bytes') {
@@ -211,7 +234,7 @@ export function publish(options: PublishOptions): Transform {
 				activeBranch: config.activeBranch,
 				includeHighResolution: config.includeHighResolution,
 				separatedAtlasForBranch: config.separatedAtlasForBranch,
-				atlas: config.atlas,
+				atlas,
 			};
 		};
 
@@ -260,7 +283,6 @@ export function publish(options: PublishOptions): Transform {
 			const atlasRuntimeOptions = resolvePublishAtlasRuntimeOptions(plan.fileExtension);
 			await atlas({
 				...plan.atlas,
-				...(options.atlas ?? {}),
 				separatedAtlasForBranch: plan.separatedAtlasForBranch,
 				encoder: options.encoder,
 				basePath: options.basePath,

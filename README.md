@@ -16,6 +16,8 @@
 
 OpenFairyGUI 是一个面向 Node.js 和自动化工作流的 FairyGUI 工程 SDK。它把工程读写、文档变换、发布以及后端会话能力拆分为可组合的 TypeScript 包，同时提供 CLI 与 MCP 接入方式。
 
+公共 authoring 以可序列化、可验证的 UAM transaction 为稳定入口；`Document` / Property Graph 是供协议读写和底层工作流使用的可变低层 API，不提供与 UAM 相同的事务不变量。
+
 它适合：
 
 - 批量检查或修改 FairyGUI 工程
@@ -30,6 +32,7 @@ OpenFairyGUI 是一个面向 Node.js 和自动化工作流的 FairyGUI 工程 SD
 | 工程读写 | 读取、修改并写回 `.fairy` 工程目录与资源 |
 | 二进制协议 | 读取和写入 `.fui` / `_fui.bytes` 发布包 |
 | Headless authoring | 通过 `Document` 或 UAM transaction 批量修改工程 |
+| 工程验证 | 检查工程读取、UAM 约束、引用、路径冲突与可用资源字节 |
 | 发布与恢复 | 发布运行时资源，并从可信本地产物执行受限恢复 |
 | 工具集成 | 提供 CLI、stateful backend runtime 与 MCP adapter |
 
@@ -69,6 +72,7 @@ await publishNode({
 npm install --global @openfairygui/cli
 
 ofgui inspect ./MyProject
+ofgui validate ./MyProject
 ofgui publish ./MyProject --output ./release
 ```
 
@@ -99,6 +103,7 @@ ofgui publish ./MyProject --output ./release
 - [快速开始](https://fairygui.dev/guide/getting-started)
 - [API Reference](https://fairygui.dev/api/)
 - [架构与包边界](./docs/architecture-overview.md)
+- [工程验证](./docs/project-validation.md)
 - [编辑器发布设置](./docs/editor-publish-settings.md)
 - [Project XML 属性协议](./docs/project-xml-attribute-reference.md)
 - [FairyGUI 二进制包格式](./docs/fairygui-binary-package-format.md)

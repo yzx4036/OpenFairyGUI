@@ -1,5 +1,6 @@
 import type { ControllerHomePageType } from '../properties/controller.js';
 import type { ProjectSettings } from '../types/settings.js';
+import type { ProjectDiagnostic } from '../validation.js';
 
 export interface UamPoint {
 	x: number;
@@ -100,6 +101,7 @@ export type UamAssetResourceKind =
 	| 'image'
 	| 'sound'
 	| 'misc'
+	| 'swf'
 	| 'font'
 	| 'movieClip'
 	| 'spine'
@@ -245,6 +247,7 @@ export interface UamComponentProperties {
 	idNum: number;
 	initName: string;
 	remark: string;
+	customExtensionId: string;
 	extensionType: string;
 	opaque: boolean;
 	buttonMode: number;
@@ -548,6 +551,7 @@ export interface UamLoaderProperties {
 	shrinkOnly: boolean;
 	autoSize: boolean;
 	useResize: boolean;
+	showErrorSign: boolean;
 	align: number;
 	vAlign: number;
 	frame: number;
@@ -682,6 +686,7 @@ export type UamDisplayNode =
 export interface UamControllerPage {
 	id: string;
 	name: string;
+	remark: string;
 }
 
 export interface UamControllerAction {
@@ -832,13 +837,10 @@ export type UamGearBinding =
 	| UamIconGearBinding
 	| UamFontSizeGearBinding;
 
-export interface UamValidationIssue {
-	path: string;
-	message: string;
-}
+export interface UamValidationIssue extends ProjectDiagnostic {}
 
 export const UAM_SUPPORTED_MATERIALIZATION_SCOPE = {
-	resourceKinds: ['image', 'sound', 'misc', 'font', 'movieClip', 'spine', 'dragonBones', 'component'] as const,
+	resourceKinds: ['image', 'sound', 'misc', 'swf', 'font', 'movieClip', 'spine', 'dragonBones', 'component'] as const,
 	nodeKinds: [
 		'image',
 		'text',
@@ -863,7 +865,7 @@ export const UAM_SUPPORTED_MATERIALIZATION_SCOPE = {
 } as const;
 
 export const UAM_SUPPORTED_TRANSACTION_SCOPE = {
-	resourceKinds: ['image', 'sound', 'misc', 'font', 'movieClip', 'spine', 'dragonBones', 'component'] as const,
+	resourceKinds: ['image', 'sound', 'misc', 'swf', 'font', 'movieClip', 'spine', 'dragonBones', 'component'] as const,
 	nodeKinds: [
 		'image',
 		'text',

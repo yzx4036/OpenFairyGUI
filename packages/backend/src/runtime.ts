@@ -1,8 +1,9 @@
 import type { ApplyUamTransactionAppError } from '@openfairygui/functions/uam';
+import type { ProjectValidationReport } from '@openfairygui/core';
 import type { PathPolicyViolationError } from './path-policy.js';
 import { AuthoringService } from './services/authoring-service.js';
 import { CacheService } from './services/cache-service.js';
-import type { BackendContext, BackendSessionState } from './services/context.js';
+import { type BackendContext, type BackendSessionState, failure } from './services/context.js';
 import { EventService } from './services/event-service.js';
 import { JobService } from './services/job-service.js';
 import { ReadService } from './services/read-service.js';
@@ -21,6 +22,7 @@ import type {
 	BackendJobNotCancellableError,
 	BackendJobNotFoundError,
 	BackendJobSnapshot,
+	BackendProjectOutline,
 	BackendResult,
 	BackendRuntimeOptions,
 	BackendSessionSnapshot,
@@ -31,6 +33,8 @@ import type {
 	GetEventsInput,
 	GetEventsSnapshot,
 	GetJobInput,
+	GetProjectOutlineInput,
+	ValidateSessionInput,
 	InProcessLockConflictError,
 	ListJobsInput,
 	MaterializeSessionInput,
@@ -38,9 +42,12 @@ import type {
 	MaterializeValidationFailedError,
 	MaterializeWriteFailedError,
 	OpenProjectSessionInput,
+	ProjectOpenFailedError,
+	ProjectRootNotAllowedError,
 	RefreshCacheInput,
 	SavePartialFailureError,
 	SaveSessionInput,
+	SessionIdConflictError,
 	SessionNotFoundError,
 	SessionStaleWriteError,
 	UamFidelityUnsupportedError,
@@ -67,10 +74,11 @@ export class BackendRuntime {
 
 	public constructor(options: BackendRuntimeOptions = {}) {
 		this.fileSystem = options.fileSystem;
-		this.capabilities = createCapabilities();
+		this.capabilities = createCapabilities(Boolean(options.fileSystem?.runProjectWriteTransaction));
 		this.context = {
 			fileSystem: this.fileSystem,
 			host: options.host,
+			allowedProjectRoots: options.allowedProjectRoots,
 			capabilities: this.capabilities,
 			sessions: this.sessions,
 			sessionsByPath: this.sessionsByPath,
@@ -99,18 +107,45 @@ export class BackendRuntime {
 	}): Promise<
 		BackendResult<
 			BackendSessionSnapshot,
-			InProcessLockConflictError | AdvisoryLockConflictError | BackendCapabilityUnavailableError
+			InProcessLockConflictError
+			| AdvisoryLockConflictError
+			| BackendCapabilityUnavailableError
+			| ProjectRootNotAllowedError
+			| ProjectOpenFailedError
 		>
 	> {
-		return this.runtimeService.openSession(input);
+		const startedAt = Date.now();
+		try {
+			return await this.runtimeService.openSession(input);
+		} catch {
+			return failure('runtime', startedAt, {
+				code: 'project_open_failed',
+				message: 'Unable to open project.',
+				projectPath: input.projectPath,
+			});
+		}
 	}
 
-	public openProjectSession(input: OpenProjectSessionInput): BackendResult<BackendSessionSnapshot> {
+	public openProjectSession(
+		input: OpenProjectSessionInput,
+	): BackendResult<BackendSessionSnapshot, InProcessLockConflictError | SessionIdConflictError> {
 		return this.runtimeService.openProjectSession(input);
 	}
 
 	public getSession(input: { sessionId: string }): BackendResult<BackendSessionSnapshot, SessionNotFoundError> {
 		return this.readService.getSession(input);
+	}
+
+	public getProjectOutline(
+		input: GetProjectOutlineInput,
+	): BackendResult<BackendProjectOutline, SessionNotFoundError> {
+		return this.readService.getProjectOutline(input);
+	}
+
+	public validateSession(
+		input: ValidateSessionInput,
+	): BackendResult<ProjectValidationReport, SessionNotFoundError> {
+		return this.readService.validateSession(input);
 	}
 
 	public async applyTransaction(
@@ -164,7 +199,7 @@ export class BackendRuntime {
 	public async closeSession(input: {
 		sessionId: string;
 	}): Promise<BackendResult<{ sessionId: string; closed: true }, SessionNotFoundError>> {
-		return this.runtimeService.closeSession(input);
+		return this.authoringService.runSessionExclusive(input.sessionId, () => this.runtimeService.closeSession(input));
 	}
 
 	public getEvents(

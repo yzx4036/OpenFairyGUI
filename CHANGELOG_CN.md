@@ -6,14 +6,35 @@
 
 发布比较：
 
-- 稳定线（`main`）：[v0.2.5...main](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.2.5...main)
-- 预发布线（`next`）：[v0.3.0-alpha.4...next](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.0-alpha.4...next)
+- 稳定线（`main`）：[v0.3.1...main](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...main)
+- 开发线（`next`）：[v0.3.1...next](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...next)
+
+## v0.3.x
+
+### v0.3.1（[发布页](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.1)）
+
+修复：
+
+- core：收紧二进制与 XML 信任边界，加入解压资源预算、数值范围校验和安全 XML 转义，并将位图字体 glyph ID 按无符号 16 位协议读写。
+- backend,mcp：加入工程根目录白名单与真实路径 containment、打开前全树符号链接拒绝、陈旧锁恢复、唯一会话 ID、原子工程保存、有界 MCP 入参以及稳定且不泄漏内部信息的错误封装。
+- functions：统一结构化 SVG 安全校验，使声明的插件在加载或 hook 失败时默认中止发布，并对显式 Node 输出目录采用可回滚的目录切换。
 
 其他：
 
-- docs：补齐双语发布记录、当前版本状态、英文整数几何协议与公开包入口说明，并将双语 Changelog 同步纳入发布约束。
+- workspace：统一要求 Node.js 20 及以上，扩展 Node 20/22/24 CI、跨平台清理与 lint 覆盖，并记录公开 API 稳定性边界和发布事务限制。
 
-## v0.3.x
+从 `v0.3.0-alpha.1` 到 `v0.3.0-alpha.4` 的预发布版本统一归入下方正式版记录。`v0.3.0` 同时包含截至 `v0.2.6` 的全部稳定版修复。
+
+### v0.3.0（[发布页](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.0)）
+
+新功能：
+
+- functions,cli：新增工程验证工作流，提供 `valid`、`invalid`、`incomplete` 结果、桌面编辑器兼容的几何校验、诊断信息与 JSON 输出。[#96](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/96) [#99](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/99) [#101](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/101)
+- mcp：新增 `openfairygui_backend_get_project_outline`，用于获取与 revision 绑定的精简工程结构。[#93](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/93)
+
+修复：
+
+- core：在 UAM lift/materialize 与工程 XML 往返过程中保留跨包图片的 `packageId`，并允许标准 SVG namespace，同时继续拒绝外部或可执行脚本的 SVG 来源。[#124](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/124)
 
 ### v0.3.0-alpha.4（[发布页](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.0-alpha.4)）
 
@@ -50,6 +71,23 @@
 ## v0.2.x
 
 从 `v0.2.0-alpha.0` 到 `v0.2.0-alpha.38` 的预发布版本统一归入下方正式版记录。
+
+### v0.2.6（[发布页](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.2.6)）
+
+新功能：
+
+- core：将 SWF 资源、controller page 备注、loader 错误标记和组件自定义扩展 ID 建模为正式的 Project XML、UAM 与二进制属性。[#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+
+修复：
+
+- core：将按钮按下效果、依布局变化的 List 默认值、Transition 帧率、属性覆盖、tile-grid 元数据、裁剪 sprite 原始尺寸及其余组件 XML 字段与编辑器和运行时协议对齐。[#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+- functions：强制执行运行时支持的压缩、资源文件名、Layabox 图集旋转与 Cocos Creator 运行时导入规则。[#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+- functions：发布时应用包排除列表、发布清空投影、包级图集设置、选中状态资源闭包与 Unity 分离 Alpha 输出。[#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+
+其他：
+
+- docs：补齐双语发布记录、当前版本状态、英文整数几何协议与公开包入口说明，并将双语 Changelog 同步纳入发布约束。[#120](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/120)
+- docs：同步架构、编辑器发布设置与二进制封包协议文档，使其与修复后的实现保持一致。[#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
 
 ### v0.2.5（[发布页](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.2.5)）
 

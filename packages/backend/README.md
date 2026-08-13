@@ -10,7 +10,7 @@ It owns:
 
 - project/session lifecycle
 - revisioned request handling
-- coordinated but non-atomic save semantics
+- coordinated save semantics, with atomic staged directory swaps on the Node adapter
 - browser-safe project sessions
 - browser-safe async project storage adapter
 - adapter-backed file sessions and backend-local session locking
@@ -28,6 +28,8 @@ It also provides:
 - polling runtime events with per-runtime monotonic sequence and bounded retention
 - `cache.refresh` in-memory jobs with cooperative cancel and terminal retention
 - revision-bound derived read-only cache snapshots
+- revision-bound project identity outlines for transaction planning
+- revision-bound read-only project validation reports
 - explicit Node bridge boundaries for publish/restore
 
 It does **not** redefine transaction grammar or expose `Document`.
@@ -37,7 +39,9 @@ and browser editors can inject an async storage adapter for OPFS, IndexedDB, ZIP
 or File System Access API bridges. Storage adapters must implement `unlink()` so resource rename/move/remove
 can clean up stale source files. Existing browser projects use a session-lifetime Web Lock: a live peer tab
 receives `lock_conflict`, while reload or abrupt document termination releases ownership without leaving a
-persistent `.openfairygui.backend.lock` marker. When Web Locks are unavailable, the storage adapter must
+persistent `.openfairygui.backend.lock` marker. The Node adapter instead keeps a token-protected lock beside
+the project directory, recovers only valid same-host stale ownership, and rejects project-directory symbolic
+links. When Web Locks are unavailable, the storage adapter must
 provide `acquireSessionLock()` with the same atomic cross-context and owner-termination semantics. The default
 Node filesystem/runtime lives under `@openfairygui/backend/node` and retains its advisory lock file behavior.
 Adapter-backed `openSession` hydrates primary resource bytes so browser-safe transactions can rename/move
@@ -66,6 +70,12 @@ import { BackendRuntime } from '@openfairygui/backend';
 const runtime = new BackendRuntime();
 const opened = runtime.openProjectSession({ project: uamProject });
 if (!opened.ok) throw new Error(opened.error.message);
+
+const outline = runtime.getProjectOutline({ sessionId: opened.data.sessionId });
+if (!outline.ok) throw new Error(outline.error.message);
+
+const validation = runtime.validateSession({ sessionId: opened.data.sessionId });
+if (!validation.ok) throw new Error(validation.error.message);
 
 const applied = await runtime.applyTransaction({
 	sessionId: opened.data.sessionId,

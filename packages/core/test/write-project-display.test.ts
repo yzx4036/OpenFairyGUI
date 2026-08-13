@@ -447,6 +447,7 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 	comp.setDesignImageOffsetY(-238);
 	comp.setIdNum(7);
 	comp.setInitName('frame');
+	comp.setCustomExtensionId('demo.extension');
 	comp.setPageController('page');
 	comp.setAddedToStageSound('ui://pkgProtocol/show');
 	comp.setRemovedFromStageSound('ui://pkgProtocol/hide');
@@ -455,12 +456,13 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 	comp.setScrollBarDisplay(2);
 	comp.setScrollBarFlags(1184);
 	const pageController = doc.createController('page');
-	pageController.addPage(doc.createControllerPage('Default').setId('0'));
+	pageController.addPage(doc.createControllerPage('Default').setId('0').setRemark('Default page'));
 	comp.addController(pageController);
 
 	const group = doc.createGGroup('toolbar');
 	group.setId('g0');
 	group.setAdvanced(true);
+	group.setLayout(1);
 	group.setColumnGap(5);
 	group.setExcludeInvisibles(true);
 
@@ -470,6 +472,7 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 	loader.setFill(1);
 	loader.setShrinkOnly(true);
 	loader.setUseResize(true);
+	loader.setShowErrorSign(true);
 	loader.setClearOnPublish(true);
 
 	const loader3d = doc.createGLoader3D('avatar');
@@ -554,12 +557,15 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 		t.true(componentXml.includes('designImageOffsetY="-238"'), 'component root writes canonical designImageOffsetY attr');
 		t.true(componentXml.includes('idnum="7"'), 'component root writes canonical idnum attr');
 		t.true(componentXml.includes('initName="frame"'), 'component root writes canonical initName attr');
+		t.true(componentXml.includes('customExtention="demo.extension"'), 'component root writes canonical customExtention attr');
+		t.true(componentXml.includes('<remark page="0" value="Default page"'), 'controller page remark is written by page index');
 		t.true(componentXml.includes('pageController="page"'), 'component root writes canonical pageController attr');
 		t.true(componentXml.includes('showSound="ui://pkgProtocol/show"'), 'component root writes canonical showSound attr');
 		t.true(componentXml.includes('hideSound="ui://pkgProtocol/hide"'), 'component root writes canonical hideSound attr');
 		t.true(componentXml.includes('scrollBarFlags="1184"'), 'component root writes canonical scrollBarFlags attr');
 		t.true(componentXml.includes('<loader'), 'loader node is written');
 		t.true(componentXml.includes('useResize="1"'), 'loader writes canonical useResize attr');
+		t.true(/<loader\b[^>]*errorSign(?:="true")?/.test(componentXml), 'loader writes canonical errorSign attr');
 		t.true(componentXml.includes('fill="scale"'), 'loader writes canonical fill attr');
 		t.true(/<loader\b[^>]*clearOnPublish(?:="true")?/.test(componentXml), 'loader writes canonical clearOnPublish attr');
 		t.false(/<loader\b[^>]*\balign=/.test(componentXml), 'loader omits default align attr');
@@ -584,11 +590,12 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 		t.true(/<inputtext\b[^>]*rotation="15"[^>]*alpha="0.65"[^>]*touchable="false"[^>]*grayed(?:="true")?/.test(componentXml), 'text input writes canonical common display attrs');
 		t.false(componentXml.includes('promptText='), 'text input no longer writes model field name');
 		t.true(componentXml.includes('colGap="5"'), 'group uses canonical colGap attr');
+		t.true(/<group\b[^>]*layout="hz"/.test(componentXml), 'group uses editor layout attr values');
 		t.true(/excludeInvisibles(?:="true")?/.test(componentXml), 'group writes excludeInvisibles attr');
 		t.true(componentXml.includes('colGap="8"'), 'list uses canonical colGap attr');
 		t.true(componentXml.includes('layout="flow_hz"'), 'list uses editor layout attr values');
 		t.true(componentXml.includes('lineItemCount="9999"'), 'list uses canonical lineItemCount attr');
-		t.true(componentXml.includes('autoItemSize="false"'), 'list uses canonical autoItemSize attr');
+		t.false(componentXml.includes('autoItemSize='), 'flow list omits its false autoItemSize default');
 		t.false(componentXml.includes('columnGap='), 'writer no longer emits legacy columnGap attr');
 		t.true(componentXml.includes('selectionController="page"'), 'list writes selectionController attr');
 
@@ -607,6 +614,8 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 		t.is(comp2?.getDesignImageOffsetY?.(), -238, 'component root designImageOffsetY survives round-trip');
 		t.is(comp2?.getIdNum?.(), 7, 'component root idnum survives round-trip');
 		t.is(comp2?.getInitName?.(), 'frame', 'component root initName survives round-trip');
+		t.is(comp2?.getCustomExtensionId?.(), 'demo.extension', 'component root customExtention survives round-trip');
+		t.is(comp2?.getController('page')?.listPages()[0]?.getRemark(), 'Default page', 'controller page remark survives round-trip');
 		t.is(comp2?.getPageController?.(), 'page', 'component root pageController survives round-trip');
 		t.is(comp2?.getAddedToStageSound?.(), 'ui://pkgProtocol/show', 'component root showSound survives round-trip');
 		t.is(comp2?.getRemovedFromStageSound?.(), 'ui://pkgProtocol/hide', 'component root hideSound survives round-trip');
@@ -615,9 +624,11 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 
 		const byId = new Map(comp2!.listChildren().map((child) => [child.getId(), child as any]));
 		t.true(byId.get('n-1')?.getUseResize?.(), 'loader useResize survives round-trip');
+		t.true(byId.get('n-1')?.getShowErrorSign?.(), 'loader errorSign survives round-trip');
 		t.is(byId.get('n-1')?.getFill?.(), 1, 'loader fill survives round-trip');
 		t.true(byId.get('n-1')?.getClearOnPublish?.(), 'loader clearOnPublish survives round-trip');
 		t.is(byId.get('g0')?.getColumnGap?.(), 5, 'group colGap survives round-trip');
+		t.is(byId.get('g0')?.getLayout?.(), 1, 'group layout survives round-trip');
 		t.true(byId.get('g0')?.getExcludeInvisibles?.(), 'group excludeInvisibles survives round-trip');
 		t.is(byId.get('n0')?.getAnimationName?.(), 'idle', 'loader3D animation survives round-trip');
 		t.false(byId.get('n0')?.getLoop?.(), 'loader3D loop survives round-trip');

@@ -67,6 +67,7 @@ interface IComponent extends IExtensibleProperty {
 	idNum: number;
 	initName: string;
 	remark: string;
+	customExtensionId: string;
 	extensionType: string;
 	buttonMode: number;
 	sound: string;
@@ -105,9 +106,27 @@ interface IComponent extends IExtensibleProperty {
  */
 export class Component extends ExtensibleProperty<IComponent> {
 	public declare propertyType: PropertyType.COMPONENT;
+	private _binaryDirty = true;
 
 	protected init(): void {
 		this.propertyType = PropertyType.COMPONENT;
+	}
+
+	/** @internal */
+	public _markBinaryClean(): this {
+		this._binaryDirty = false;
+		return this;
+	}
+
+	/** @internal */
+	public _markBinaryDirty(): this {
+		this._binaryDirty = true;
+		return this;
+	}
+
+	/** @internal */
+	public _isBinaryDirty(): boolean {
+		return this._binaryDirty;
 	}
 
 	protected getDefaults(): Nullable<IComponent> {
@@ -155,6 +174,7 @@ export class Component extends ExtensibleProperty<IComponent> {
 			idNum: 0,
 			initName: '',
 			remark: '',
+			customExtensionId: '',
 			extensionType: '',
 			buttonMode: 0,
 			sound: '',
@@ -344,6 +364,9 @@ export class Component extends ExtensibleProperty<IComponent> {
 
 	public getRemark(): string { return this.get('remark'); }
 	public setRemark(v: string): this { return this.set('remark', v); }
+
+	public getCustomExtensionId(): string { return this.get('customExtensionId'); }
+	public setCustomExtensionId(v: string): this { return this.set('customExtensionId', v); }
 
 	public getExtensionType(): string { return this.get('extensionType'); }
 	public setExtensionType(v: string): this { return this.set('extensionType', v); }

@@ -4,6 +4,7 @@ import {
 	UAM_SUPPORTED_TRANSACTION_SCOPE,
 } from '@openfairygui/core/uam';
 import { BackendRuntime } from '../src/index.js';
+import { createNodeBackendRuntime } from '../src/node.js';
 
 test('getCapabilities reports derived ownership and runtime capabilities', (t) => {
 	const runtime = new BackendRuntime();
@@ -21,9 +22,13 @@ test('getCapabilities reports derived ownership and runtime capabilities', (t) =
 	t.is(result.data.appSeamOwner, '@openfairygui/functions');
 	t.is(result.data.runtimeOwner, '@openfairygui/backend');
 	t.is(result.data.contractVersion, '1.1.0-p2');
-	t.is(result.data.capabilitySchemaVersion, 2);
+	t.is(result.data.capabilitySchemaVersion, 3);
 	t.true(result.data.read.capabilitySnapshot);
 	t.true(result.data.read.sessionSnapshot);
+	t.true(result.data.read.projectOutline);
+	t.true(result.data.read.projectValidation);
+	t.true(result.data.methods.includes('getProjectOutline'));
+	t.true(result.data.methods.includes('validateSession'));
 	t.true(result.data.authoring.applyTransaction);
 	t.true(result.data.authoring.saveSession);
 	t.false(result.data.artifact.publish);
@@ -49,4 +54,9 @@ test('getCapabilities reports derived ownership and runtime capabilities', (t) =
 	t.deepEqual(result.data.runtime.jobs.supportedKinds, ['cache.refresh']);
 	t.false(result.data.runtime.jobs.artifactJobs);
 	t.true(result.data.runtime.cache.derivedReadOnly);
+});
+
+test('Node runtime advertises atomic project saves', (t) => {
+	const result = createNodeBackendRuntime().getCapabilities();
+	t.true(result.ok && result.data.runtime.atomicSave);
 });

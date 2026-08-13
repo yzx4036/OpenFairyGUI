@@ -4,6 +4,17 @@ export { Document, type Transform, type TransformContext } from './document.js';
 // Extension
 export { Extension } from './extension.js';
 
+// Validation
+export {
+	createProjectValidationReport,
+	sortProjectDiagnostics,
+	type ProjectDiagnostic,
+	type ProjectDiagnosticCode,
+	type ProjectDiagnosticSeverity,
+	type ProjectValidationReport,
+} from './validation.js';
+export { validateSafeSvgSource } from './utils/svg-validation.js';
+
 // Unified Authoring Model (Gate A)
 export {
 	type UamAnimationGearBinding,
@@ -137,6 +148,9 @@ export {
 	assertValidUamProject,
 	commitUamProjectSourcePaths,
 	validateUamProject,
+	validateUamReferences,
+	validateUamSourceBytes,
+	type UamSourceValidationResult,
 	liftDocumentToUamProject,
 	materializeUamProject,
 	readProjectAsUam,
@@ -227,6 +241,7 @@ export {
 	SoundResource,
 	FontResource,
 	MovieClipResource,
+	SwfResource,
 	SpineResource,
 	DragonBonesResource,
 	Component,
@@ -299,9 +314,12 @@ export {
 	BinaryReader,
 	BinaryWriter,
 	ReaderContext,
+	type BinaryReadLimits,
+	type BinaryReaderOptions,
 	type BinaryWriterOptions,
 	type FileSystem,
 	type ProjectReadOptions,
+	type ProjectReadResult,
 	type ProjectBranchDirectory,
 	type ProjectSourceFile,
 	type ProjectWriteOptions,

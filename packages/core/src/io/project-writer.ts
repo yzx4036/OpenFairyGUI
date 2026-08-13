@@ -124,7 +124,11 @@ export class ProjectWriter {
 
 		// 1. Write .fairy file
 		const fairyXml = `<?xml version="1.0" encoding="utf-8"?>\n`
-			+ `<projectDescription id="${root.getProjectId()}" type="${this._projectTypeName(root.getProjectType())}" version="${root.getVersion() || '3.0'}"/>\n`;
+			+ `<projectDescription${renderXmlAttrs({
+				id: root.getProjectId(),
+				type: this._projectTypeName(root.getProjectType()),
+				version: root.getVersion() || '3.0',
+			})}/>\n`;
 		await fs.writeFile(projectPath, fairyXml);
 
 		// 2. Write settings
@@ -766,6 +770,7 @@ export class ProjectWriter {
 			SoundResource: 'sound',
 			FontResource: 'font',
 			MovieClipResource: 'movieclip',
+			SwfResource: 'swf',
 			SpineResource: 'spine',
 			DragonBonesResource: 'dragonbones',
 		};
@@ -780,7 +785,13 @@ export class ProjectWriter {
 			const fileName = (res as WritableImageResource).getFileName?.() ?? '';
 			if (fileName) return fileName;
 		}
-		if (type === 'SoundResource' || type === 'MiscResource' || type === 'SpineResource' || type === 'DragonBonesResource') {
+		if (
+			type === 'SoundResource' ||
+			type === 'MiscResource' ||
+			type === 'SwfResource' ||
+			type === 'SpineResource' ||
+			type === 'DragonBonesResource'
+		) {
 			const fileName = (res as WritableFileResource).getFile?.() ?? '';
 			if (fileName) return fileName;
 		}

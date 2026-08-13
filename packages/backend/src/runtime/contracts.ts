@@ -1,4 +1,9 @@
-import type { UamProject, UamTransactionOperation } from '@openfairygui/core/uam';
+import type {
+	UamDisplayNodeKind,
+	UamProject,
+	UamResource,
+	UamTransactionOperation,
+} from '@openfairygui/core/uam';
 import type { ApplyUamTransactionAppError } from '@openfairygui/functions/uam';
 import type {
 	BACKEND_CAPABILITY_SCHEMA_VERSION,
@@ -31,6 +36,15 @@ export interface BackendFileSystem {
 	writeFileRaw(filePath: string, data: Uint8Array): Promise<void>;
 	mkdir(dirPath: string, options?: { recursive?: boolean }): Promise<void>;
 	resolvePath(filePath: string): Promise<string>;
+	/** Optional host validation before a project is read. Node rejects links anywhere in the project tree. */
+	validateProjectRoot?(projectRoot: string): Promise<void>;
+	/** Optional host-specific lock location. Node keeps it beside the project so directory swaps do not move it. */
+	getSessionLockPath?(canonicalProjectPath: string): string;
+	/** Runs project writes against a staged copy and commits them as one directory swap. */
+	runProjectWriteTransaction?(
+		projectRoot: string,
+		write: (stagedFileSystem: BackendFileSystem) => Promise<void>,
+	): Promise<void>;
 	acquireSessionLock(lockPath: string): Promise<BackendSessionLock>;
 	unlink(filePath: string): Promise<void>;
 	rmdir(dirPath: string): Promise<void>;
@@ -94,6 +108,8 @@ export interface BackendCapabilities {
 		'openSession',
 		'openProjectSession',
 		'getSession',
+		'getProjectOutline',
+		'validateSession',
 		'applyTransaction',
 		'saveSession',
 		'materializeSession',
@@ -108,6 +124,8 @@ export interface BackendCapabilities {
 	read: {
 		capabilitySnapshot: true;
 		sessionSnapshot: true;
+		projectOutline: true;
+		projectValidation: true;
 	};
 	authoring: {
 		applyTransaction: true;
@@ -135,7 +153,7 @@ export interface BackendCapabilities {
 		sessionRuntime: true;
 		advisoryLocking: true;
 		coordinatedSave: true;
-		atomicSave: false;
+		atomicSave: boolean;
 		staleRevisionProtection: true;
 		pathPolicy: {
 			canonicalization: 'realpath+normalized-casefold';
@@ -176,6 +194,37 @@ export interface BackendSessionSnapshot {
 	uamFidelity: 'full' | 'unsupported';
 	lockHeld: boolean;
 	capabilities: BackendCapabilities;
+}
+
+export interface BackendProjectOutline {
+	sessionId: string;
+	revision: number;
+	projectId: string;
+	projectType: number;
+	version: string;
+	branches: string[];
+	packages: BackendProjectOutlinePackage[];
+}
+
+export interface BackendProjectOutlinePackage {
+	id: string;
+	name: string;
+	branchNames: string[];
+	folders: Array<{ branch: string; path: string }>;
+	resources: BackendProjectOutlineResource[];
+}
+
+export interface BackendProjectOutlineResource {
+	id: string;
+	name: string;
+	path: string;
+	kind: UamResource['kind'];
+	branch: string;
+	component?: {
+		displayList: Array<{ id: string; name: string; kind: UamDisplayNodeKind }>;
+		controllers: Array<{ name: string; pages: Array<{ id: string; name: string }> }>;
+		transitions: Array<{ name: string }>;
+	};
 }
 
 export interface MaterializeSessionSnapshot extends BackendSessionSnapshot {
@@ -236,6 +285,12 @@ export interface AdvisoryLockConflictError {
 	lockFilePath: string;
 }
 
+export interface SessionIdConflictError {
+	code: 'session_id_conflict';
+	message: string;
+	sessionId: string;
+}
+
 export interface SavePartialFailureError {
 	code: 'save_partial_failure';
 	message: string;
@@ -245,7 +300,7 @@ export interface SavePartialFailureError {
 	lastSavedRevision: number;
 	committedPaths: string[];
 	failedPaths: string[];
-	diskMayBePartiallyUpdated: true;
+	diskMayBePartiallyUpdated: boolean;
 }
 
 export interface UamFidelityUnsupportedError {
@@ -275,7 +330,7 @@ export interface MaterializeWriteFailedError {
 	failedPaths: string[];
 	skippedPaths: string[];
 	diagnostics: BackendDiagnostic[];
-	diskMayBePartiallyUpdated: true;
+	diskMayBePartiallyUpdated: boolean;
 }
 
 export type BackendEventKind =
@@ -454,6 +509,7 @@ export interface RefreshCacheInput {
 
 export type BackendError =
 	| SessionNotFoundError
+	| SessionIdConflictError
 	| SessionStaleWriteError
 	| InProcessLockConflictError
 	| AdvisoryLockConflictError
@@ -468,12 +524,34 @@ export type BackendError =
 	| BackendJobCancelledError
 	| CacheRefreshFailedError
 	| BackendCapabilityUnavailableError
+	| ProjectRootNotAllowedError
+	| ProjectOpenFailedError
 	| ApplyUamTransactionAppError;
+
+export interface ProjectRootNotAllowedError {
+	code: 'project_root_not_allowed';
+	message: string;
+	projectPath: string;
+}
+
+export interface ProjectOpenFailedError {
+	code: 'project_open_failed';
+	message: string;
+	projectPath: string;
+}
 
 export interface ApplySessionTransactionInput {
 	sessionId: string;
 	expectedRevision: number;
 	operations: UamTransactionOperation[];
+}
+
+export interface GetProjectOutlineInput {
+	sessionId: string;
+}
+
+export interface ValidateSessionInput {
+	sessionId: string;
 }
 
 export interface OpenProjectSessionInput {
@@ -515,4 +593,6 @@ export interface MaterializeSessionInput {
 export interface BackendRuntimeOptions {
 	fileSystem?: BackendFileSystem;
 	host?: BackendHostAdapter;
+	/** Canonical filesystem roots available to file-backed sessions. Omit for unrestricted library use. */
+	allowedProjectRoots?: readonly string[];
 }

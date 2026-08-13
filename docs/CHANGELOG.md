@@ -47,8 +47,19 @@
 
 ## 上游合并基线
 
-- `c959f5e` Merge upstream-release → develop（含 v0.2.0-alpha.37 及之前的全部上游提交）。
+- `7af7ab0` merge upstream-release v0.2.5 → test-merge；`03ef5ed` test-merge → develop。
 - fork 已含 `#86 preserve override whitespace`、`#85 XML overrides + SVG`、`#79/#78/#77/#76/#75` 等上游修复。
+
+## 2026-08-13 — merge upstream-release → test-merge（v0.2.5 → v0.3.1）
+
+- **上游基线**: `8a8946a`（含 v0.2.6、v0.3.0、v0.3.1：协议类型完整覆盖、SWF 资源保留、项目值校验、发布信任边界加固、backend 路径策略、atomic save/stale lock 恢复等 44 个提交）
+- **冲突文件**: 无——5 个双侧改动文件（`docs/README.md`、`docs/editor-publish-settings.md`、`docs/publish-plugins.md`、`packages/functions/src/node.ts`、`packages/functions/src/publish.ts`）全部自动合并成功。
+- **取舍决策**:
+  - 本仓库 `--plugin` 插件加载、`plugins/et-fui-codegen`、bytes 子文件夹输出全部完好保留（`publish.ts` 中 `outputDir = ${outputDir}/${publishName}` 逻辑与上游新增的包级 atlas 选项解析共存）；
+  - 上游插件失败中止策略（`shouldAbortPluginFailure`，插件声明 `abortOnError` 时 hook 失败直接抛错而非仅 warn）→ 采纳，与本地 `--plugin` 功能互补；
+  - 上游 `validateProjectNode` 导出、包级 atlas 设置解析（useGlobal/sizeOption/extractAlpha 等）→ 采纳，纯增量改进。
+- **测试同步**: 上游新增的 3 个 bytes 产物测试（misc runtime-prefixed / package exclusions / atlas RGB-alpha split）断言未适配本地子文件夹约定 → 本仓库同步断言路径到 `{PkgName}/` 子文件夹（`packages/functions/test/publish.test.ts`），3 个测试转绿。
+- **验证**: `pnpm run build` ✅（et-fui-codegen 需 `NODE_OPTIONS=--max-old-space-size=16384`，pre-existing）；`pnpm run lint` ✅（1 个 pre-existing warning，`scripts/verify-fgui.ts` 未用导入）；`pnpm run test` 失败集与 merge 前基线完全一致（11 个，均为本地已知测试债）。
 
 ## 2026-08-07 — merge upstream-release → test-merge（v0.2.0-alpha.37 → v0.2.5）
 

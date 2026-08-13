@@ -6,14 +6,35 @@
 
 Release comparisons:
 
-- Stable line (`main`): [v0.2.5...main](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.2.5...main)
-- Prerelease line (`next`): [v0.3.0-alpha.4...next](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.0-alpha.4...next)
+- Stable line (`main`): [v0.3.1...main](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...main)
+- Development line (`next`): [v0.3.1...next](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...next)
+
+## v0.3.x
+
+### v0.3.1 ([Release](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.1))
+
+Fixes:
+
+- core: Tighten binary and XML trust boundaries with decompression budgets, numeric range validation, and safe XML escaping, and encode bitmap-font glyph IDs using the unsigned 16-bit runtime contract.
+- backend,mcp: Add allowed project roots with real-path containment, whole-tree symbolic-link rejection before opening, stale-lock recovery, unique session IDs, atomic project saves, bounded MCP inputs, and stable error envelopes that do not leak internals.
+- functions: Centralize structured SVG safety validation, abort declared-plugin failures by default, and publish explicit Node output directories through rollback-safe directory swaps.
 
 Other:
 
-- docs: Complete the bilingual release history, current version status, English integer-geometry protocol, and public package entrypoint guide, and make bilingual Changelog updates a release requirement.
+- workspace: Require Node.js 20 or newer, expand CI to Node 20/22/24, make cleanup cross-platform, broaden lint coverage, and document public API stability and publish-transaction limits.
 
-## v0.3.x
+Prerelease builds from `v0.3.0-alpha.1` through `v0.3.0-alpha.4` are consolidated into the stable release below. `v0.3.0` also contains every stable fix through `v0.2.6`.
+
+### v0.3.0 ([Release](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.0))
+
+Features:
+
+- functions,cli: Add project validation with `valid`, `invalid`, and `incomplete` results, desktop-compatible geometry checks, diagnostics, and JSON output. [#96](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/96) [#99](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/99) [#101](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/101)
+- mcp: Add `openfairygui_backend_get_project_outline` for compact, revision-bound project structure discovery. [#93](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/93)
+
+Fixes:
+
+- core: Preserve cross-package image `packageId` values through UAM lift/materialization and Project XML round trips, and accept the standard SVG namespace while continuing to reject external or scriptable SVG sources. [#124](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/124)
 
 ### v0.3.0-alpha.4 ([Release](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.0-alpha.4))
 
@@ -50,6 +71,23 @@ Features:
 ## v0.2.x
 
 Prerelease builds from `v0.2.0-alpha.0` through `v0.2.0-alpha.38` are consolidated into the stable release below.
+
+### v0.2.6 ([Release](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.2.6))
+
+Features:
+
+- core: Model SWF resources, controller-page remarks, loader error signs, and component custom-extension IDs as formal Project XML, UAM, and binary properties. [#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+
+Fixes:
+
+- core: Align button down effects, layout-dependent List defaults, Transition frame rates, property overrides, tile-grid metadata, trimmed sprite sizes, and remaining component XML fields with the editor and runtime protocols. [#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+- functions: Enforce runtime-supported compression, resource filenames, Layabox atlas rotation, and Cocos Creator runtime imports. [#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+- functions: Apply package exclusions, publish-clear projection, package-level atlas settings, selected-state resource closure, and Unity split-alpha output during publishing. [#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
+
+Other:
+
+- docs: Complete the bilingual release history, current version status, English integer-geometry protocol, and public package entrypoint guide, and make bilingual Changelog updates a release requirement. [#120](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/120)
+- docs: Synchronize the architecture, editor-publish settings, and binary-package protocol documents with the corrected implementation. [#121](https://github.com/OpenFairyGUI/OpenFairyGUI/pull/121)
 
 ### v0.2.5 ([Release](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.2.5))
 

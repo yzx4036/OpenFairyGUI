@@ -104,6 +104,7 @@ See [Packages and Tools](https://fairygui.dev/en/guide/packages) for package ent
 - [Getting Started](https://fairygui.dev/en/guide/getting-started)
 - [API Reference](https://fairygui.dev/api/)
 - [Architecture and Package Boundaries](./docs/en/architecture-overview.md)
+- [Fork Codegen Policy](./docs/fork-codegen-policy.md)
 - [Project Validation](./docs/project-validation.md)
 - [Editor Publish Settings](./docs/en/editor-publish-settings.md)
 - [Project XML Attribute Protocol](./docs/en/project-xml-attribute-reference.md)

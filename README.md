@@ -104,6 +104,7 @@ ofgui publish ./MyProject --output ./release
 - [快速开始](https://fairygui.dev/guide/getting-started)
 - [API Reference](https://fairygui.dev/api/)
 - [架构与包边界](./docs/architecture-overview.md)
+- [Fork 下游代码生成策略](./docs/fork-codegen-policy.md)
 - [工程验证](./docs/project-validation.md)
 - [编辑器发布设置](./docs/editor-publish-settings.md)
 - [Project XML 属性协议](./docs/project-xml-attribute-reference.md)

@@ -83,6 +83,7 @@ Run `ofgui --help` for all commands and options.
 | Package | Purpose |
 |---|---|
 | [`@openfairygui/core`](https://www.npmjs.com/package/@openfairygui/core) | Document model, project I/O, and binary protocol |
+| [`@openfairygui/codegen`](https://www.npmjs.com/package/@openfairygui/codegen) | Runtime-dependency-free template engine, naming, hashing, and code-writing policies |
 | [`@openfairygui/functions`](https://www.npmjs.com/package/@openfairygui/functions) | Inspection, transforms, publish, and recovery workflows |
 | [`@openfairygui/backend`](https://www.npmjs.com/package/@openfairygui/backend) | Session, revision, save, and capability runtime |
 | [`@openfairygui/cli`](https://www.npmjs.com/package/@openfairygui/cli) | Command-line tools |

@@ -43,6 +43,10 @@ node packages/cli/dist/cli.mjs publish "FGUIProject/" \
 `--plugin` 指向的目录下所有符合插件 manifest 的子目录都会被加载，与工程内 `plugins/`
 自动发现合并生效。适合把通用插件（如代码生成插件）放在共享仓库，而不是复制进每个 FGUI 工程。
 
+插件源码中的运行时包依赖必须能从插件所在位置正常解析。仓库内或 `--plugin` 指向 pnpm workspace
+中的 `et-fui-codegen` 会通过 workspace 解析 `@openfairygui/codegen`；若只把插件目录复制到工程内，
+目标工程还必须安装该运行时包或提供等价的 workspace 链接。插件 manifest 中仅用于类型的依赖不改变此规则。
+
 ## Manifest
 
 每个 OpenFairyGUI publish 插件必须放在独立子目录中，并提供 `package.json`：

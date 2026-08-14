@@ -3,6 +3,7 @@
 | 包 | 用途 |
 |---|---|
 | `@openfairygui/core` | 属性图、文档模型、工程读写与二进制读写等底层能力。 |
+| `@openfairygui/codegen` | 零运行时依赖的通用模板代码生成基础设施。 |
 | `@openfairygui/functions` | 检查、转换、发布、还原和其他高层工作流。 |
 | `@openfairygui/backend` | 有状态工程会话、存储适配与运行时服务。 |
 | `@openfairygui/mcp` | 将 backend runtime 暴露为 MCP tools、resources 与 prompts 的薄适配层。 |
@@ -10,13 +11,14 @@
 
 ## 选择入口
 
-只需读取、修改或发布工程时，从 `core` 和 `functions` 开始。需要 CLI 批处理时安装 `@openfairygui/cli`；需要会话、能力发现或 MCP 客户端集成时，再接入 `backend` 与 `mcp`。
+只需读取、修改或发布工程时，从 `core` 和 `functions` 开始。需要构建框架无关的模板代码生成工具时使用 `codegen`；需要 CLI 批处理时安装 `@openfairygui/cli`；需要会话、能力发现或 MCP 客户端集成时，再接入 `backend` 与 `mcp`。
 
 ## 公开入口
 
 | 入口 | 使用边界 |
 |---|---|
 | `@openfairygui/core` | 运行时无关的属性模型、`Document`、UAM、二进制协议与可注入文件系统的工程读写。 |
+| `@openfairygui/codegen` | 单入口导出严格模板渲染、C# 命名与路径工具、稳定哈希及可注入文件系统的代码写入策略；无运行时依赖。 |
 | `@openfairygui/core/uam` | 聚焦 UAM 模型、规范化、校验、事务和 lift/materialize。 |
 | `@openfairygui/core/project-io` | 使用调用方提供的 `FileSystem` 读写工程，不绑定 Node 或浏览器宿主。 |
 | `@openfairygui/core/node` | Node.js 文件系统入口 `NodeIO`。 |

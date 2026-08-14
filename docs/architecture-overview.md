@@ -49,7 +49,9 @@ flowchart LR
         RST["受限 restore<br/>trusted-local recovery"]
         RSTNODE["restoreNode"]
         ATLAS["atlas"]
-        CG["codegen"]
+        CG["内置 codegen"]
+        TCG["@openfairygui/codegen<br/>模板引擎 / 命名 / 哈希 / writer"]
+        ETGEN["et-fui-codegen<br/>ET 模型 / 模板 / 目录布局"]
         PUBNODE --> PUB
         PUBWEB --> PUB
         RSTNODE --> RST
@@ -115,6 +117,9 @@ flowchart LR
     PUB --> ATLAS
     PUB --> BW
     PUB --> CG
+    PUBNODE --> ETGEN
+    TCG --> ETGEN
+    ETGEN --> CODEOUT
     RST --> BR
     RST --> PW
 
@@ -137,12 +142,15 @@ flowchart LR
 | 内部图物化层 | `Document` 持有 `Property Graph`，用于当前内部执行、存储、适配与既有工作流复用 | `packages/core/src/document.ts`、`packages/core/src/properties/property.ts` |
 | 项目骨架层 | `Root -> Package -> Resource -> Component` 组成基础结构 | `packages/core/src/properties/root.ts`、`packages/core/src/properties/package.ts`、`packages/core/src/properties/component.ts` |
 | 工作流层 | 面向自动化的可组合处理管线，以及建立在 `core` Phase A transaction contract 之上的薄 authoring app seam；publish、atlas、restore 的 facade 只保留工作流编排，选项解析、package context、外部资源、packing、codec 与输出事务位于各自内部域模块 | `packages/functions/src/inspect.ts`、`packages/functions/src/validate.ts`、`packages/functions/src/prune.ts`、`packages/functions/src/rename.ts`、`packages/functions/src/publish.ts`、`packages/functions/src/publish/*.ts`、`packages/functions/src/adapters/node/*.ts`、`packages/functions/src/adapters/web/*.ts`、`packages/functions/src/node.ts`、`packages/functions/src/web.ts`、`packages/functions/src/restore.ts`、`packages/functions/src/restore-internals/*.ts`、`packages/functions/src/atlas.ts`、`packages/functions/src/atlas/*.ts`、`packages/functions/src/codegen.ts`、`packages/functions/src/uam-transaction.ts` |
+| 模板代码生成基础设施 | `@openfairygui/codegen` 提供严格模板渲染、C# 命名与路径工具、稳定哈希和可注入文件系统的 overwrite/preserve 写入策略；不承载 FairyGUI 中间模型、框架模板或目录布局，且无运行时依赖 | `packages/codegen/src/*.ts` |
+| ET 代码生成插件 | Node publish 插件负责 FairyGUI `Document` 到 ET 模型的映射、ET C# 模板和输出目录布局，并在运行时依赖 `@openfairygui/codegen` 的通用能力 | `plugins/et-fui-codegen/src/*.ts`、`plugins/et-fui-codegen/src/templates/*.tpl` |
 | 状态化后端服务层 | browser-safe project session、browser-safe async project storage adapter、adapter-backed file session、revision/dirty tracking、backend-local canonical path / session lock lease、coordinated save、capability planes / manifest、version surface、runtime events、in-memory jobs、derived read-only cache，以及 `read / authoring / artifact / runtime` service stratification | `packages/backend/src/runtime.ts`、`packages/backend/src/runtime/contracts.ts`、`packages/backend/src/runtime/capabilities.ts`、`packages/backend/src/storage.ts`、`packages/backend/src/node.ts`、`packages/backend/src/contracts.ts`、`packages/backend/src/path-policy.ts`、`packages/backend/src/services/*.ts` |
 | MCP 薄适配层 | 把 backend P2 方法完整映射为 MCP tools；承接 stdio transport、MCP tool output schema、identity resources 与 guidance prompts，不重新定义 UAM / backend 语义 | `packages/mcp/src/server.ts`、`packages/mcp/src/tool-definitions.ts`、`packages/mcp/src/tool-handler.ts`、`packages/mcp/src/resource-definitions.ts`、`packages/mcp/src/prompt-definitions.ts`、`packages/mcp/src/stdio.ts` |
 | 输出层 | 工程文件写回、图集产物生成、二进制封包输出与代码生成输出 | `packages/core/src/io/project-writer.ts`、`packages/functions/src/atlas.ts`、`packages/core/src/io/binary-writer.ts`、`packages/functions/src/codegen.ts` |
 
 补充说明：
 - `@openfairygui/core` 当前同时承载 UAM 主真相层与内部图物化层。
+- `@openfairygui/codegen` 与 `packages/functions/src/codegen.ts` 的内置 FairyGUI 代码生成是不同边界：前者是零运行时依赖的通用模板基础设施，后者仍属于 publish 工作流。`et-fui-codegen` 只下沉通用 engine / naming / hash / writer，ET model、模板和目录布局继续留在插件层。
 - `packages/core/src/uam/model.ts` 当前的 materialization scope 覆盖现有全部 display node 类：`GImage`、`GTextField`、`GRichTextField`、`GTextInput`、`GComponent`、`GList`、`GTree`、`GGraph`、`GGroup`、`GLoader`、`GLoader3D`、`GMovieClip`、`GButton`、`GLabel`、`GComboBox`、`GProgressBar`、`GSlider`、`GScrollBar`。`UamDisplayNodeBase` 正式承载位置、尺寸、锁定、宽高约束、最小/最大尺寸、pivot、缩放、倾斜、可见状态、tooltip、混合模式与滤镜等公共属性；组件定义的完整根属性由 `component.properties` 承载，`GComponent` 引用节点的具体扩展覆盖由 `instanceProperties` 承载，组件实例与静态列表项的有序属性覆盖由各自的 `propertyOverrides` 承载，List/Tree 与 ComboBox 的 `autoClearItems` 保留在对应正式属性中。图片资源、MovieClip 资源与文本对象的正式工程属性分别由完整属性快照承载。`UamMovieClipResource.movieClip` 包含 `interval / repeatDelay / swing / smoothing / frames`，帧快照包含矩形、附加延迟和 sprite id；不兼容旧的通用 `metadata` 属性袋。`group` 只属于协议支持该字段的 display node，`GLoader / GLoader3D` 不承载该引用。这些具体属性不通过长期 `extras` 或通用 `metadata` 属性袋承载。
 - `packages/core/src/uam/transaction-contracts.ts` 承载公开 selector、operation、support issue 与 transaction error contract；`transaction.ts` 是稳定门面，support preflight、UAM-native apply、Document-backed apply 与共享定位逻辑分别位于 `transaction-preflight.ts`、`transaction-uam-apply.ts`、`transaction-document-apply.ts`、`transaction-shared.ts`。`commit()` 结果是新的 normalized `UamProject`。纯 `setComponentProps`、`setDisplayNodeProps`、`setImageResourceProps`、幂等 `setResourceFavorite` / `setResourceFolderFavorite` / `setResourceExported`、包/组件/二进制资源与空资源文件夹生命周期事务，以及生命周期与 `attachDisplayNode` / `detachDisplayNode` 引用重写的混合批次直接在 UAM 上执行；预检按最终投影状态验证 group、资源和组件引用，因此资源复制、嵌套组件复制、引用重写与组件移动可在同一批次原子提交。未触及的复杂节点、引用、relation、transition 作为 lossless passthrough 保留，其余资源、结构和 gear 事务通过私有 `Document` 工作副本执行，并在失败时整体丢弃。
 - `setResourceFolderAtlas` 是 UAM-native 的公开事务，只更新规范 `branch + path` selector 指定文件夹的 source Atlas 槽位。它与 `addResourceFolder.atlas` 共用预检：空字符串清除覆盖，非空值必须是不超过当前有效 `maxAtlasIndex` 的规范十进制槽位，未配置 package publish 时上限按 `10` 处理；相同赋值以 `resource_folder_atlas_unchanged` 拒绝。同一事务可先用 `updatePackageSettings` 扩大槽位上限，再提交文件夹 Atlas 操作，预检按操作顺序读取投影设置。

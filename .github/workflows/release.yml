@@ -41,7 +41,7 @@ jobs:
         env:
           RELEASE_REF_TYPE: ${{ github.ref_type }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: node --input-type=module -e "import fs from 'node:fs'; if (process.env.RELEASE_REF_TYPE !== 'tag') throw new Error('Release must run from a tag.'); for (const dir of ['core','functions','backend','cli','mcp']) { const { name, version } = JSON.parse(fs.readFileSync('packages/' + dir + '/package.json', 'utf8')); if ('v' + version !== process.env.RELEASE_TAG) throw new Error(name + '@' + version + ' does not match ' + process.env.RELEASE_TAG); }"
+        run: node --input-type=module -e "import fs from 'node:fs'; if (process.env.RELEASE_REF_TYPE !== 'tag') throw new Error('Release must run from a tag.'); for (const dir of ['codegen','core','functions','backend','cli','mcp']) { const { name, version } = JSON.parse(fs.readFileSync('packages/' + dir + '/package.json', 'utf8')); if ('v' + version !== process.env.RELEASE_TAG) throw new Error(name + '@' + version + ' does not match ' + process.env.RELEASE_TAG); }"
 
       - name: Lint
         run: pnpm lint:ci
@@ -63,6 +63,7 @@ jobs:
             (cd "${pkg_dir}" && pnpm pack --pack-destination ../../.release)
           }
           pack_package packages/core
+          pack_package packages/codegen
           pack_package packages/functions
           pack_package packages/backend
           pack_package packages/cli
@@ -109,6 +110,7 @@ jobs:
             fi
           }
           publish_if_needed packages/core
+          publish_if_needed packages/codegen
           publish_if_needed packages/functions
           publish_if_needed packages/backend
           publish_if_needed packages/cli
@@ -159,6 +161,7 @@ jobs:
             fi
           }
           publish_if_needed packages/core
+          publish_if_needed packages/codegen
           publish_if_needed packages/functions
           publish_if_needed packages/backend
           publish_if_needed packages/cli

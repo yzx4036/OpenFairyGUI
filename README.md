@@ -83,6 +83,7 @@ ofgui publish ./MyProject --output ./release
 | 包 | 用途 |
 |---|---|
 | [`@openfairygui/core`](https://www.npmjs.com/package/@openfairygui/core) | 文档模型、工程读写与二进制协议 |
+| [`@openfairygui/codegen`](https://www.npmjs.com/package/@openfairygui/codegen) | 零运行时依赖的模板引擎、命名、哈希与代码写入策略 |
 | [`@openfairygui/functions`](https://www.npmjs.com/package/@openfairygui/functions) | 检查、变换、发布与恢复流程 |
 | [`@openfairygui/backend`](https://www.npmjs.com/package/@openfairygui/backend) | session、revision、save 与 capability runtime |
 | [`@openfairygui/cli`](https://www.npmjs.com/package/@openfairygui/cli) | 命令行工具 |

@@ -3,6 +3,7 @@
 | Package | Purpose |
 |---|---|
 | `@openfairygui/core` | Property graph, document model, project I/O, and binary I/O. |
+| `@openfairygui/codegen` | Runtime-dependency-free infrastructure for general template-based code generation. |
 | `@openfairygui/functions` | Inspection, transforms, publishing, recovery, and other high-level workflows. |
 | `@openfairygui/backend` | Stateful project sessions, storage adapters, and runtime services. |
 | `@openfairygui/mcp` | Thin adapter exposing backend runtime capabilities as MCP tools, resources, and prompts. |
@@ -10,13 +11,14 @@
 
 ## Choose an entrypoint
 
-Start with `core` and `functions` when you only need to read, update, or publish projects. Install `@openfairygui/cli` for command-line batch processing. Add `backend` and `mcp` when you need sessions, capability discovery, or MCP client integration.
+Start with `core` and `functions` when you only need to read, update, or publish projects. Use `codegen` to build framework-agnostic template code generators. Install `@openfairygui/cli` for command-line batch processing. Add `backend` and `mcp` when you need sessions, capability discovery, or MCP client integration.
 
 ## Public entrypoints
 
 | Entrypoint | Boundary |
 |---|---|
 | `@openfairygui/core` | Runtime-neutral property model, `Document`, UAM, binary protocol, and project I/O with an injected filesystem. |
+| `@openfairygui/codegen` | Single entrypoint for strict template rendering, C# naming and path helpers, stable hashing, and code-writing policies over an injected filesystem; it has no runtime dependencies. |
 | `@openfairygui/core/uam` | Focused UAM models, normalization, validation, transactions, and lift/materialize APIs. |
 | `@openfairygui/core/project-io` | Project I/O through a caller-provided `FileSystem`, without binding to Node.js or a browser host. |
 | `@openfairygui/core/node` | Node.js filesystem entrypoint exposing `NodeIO`. |

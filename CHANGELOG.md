@@ -9,6 +9,10 @@ Release comparisons:
 - Stable line (`main`): [v0.3.1...main](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...main)
 - Development line (`next`): [v0.3.1...next](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...next)
 
+Added:
+
+- codegen: Add the runtime-dependency-free `@openfairygui/codegen` package with a template engine, C# naming and path helpers, stable hashing, and code-file writing policies; `et-fui-codegen` now reuses this package while preserving generated output byte for byte.
+
 ## v0.3.x
 
 ### v0.3.1 ([Release](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.1))

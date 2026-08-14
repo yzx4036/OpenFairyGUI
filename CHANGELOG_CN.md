@@ -9,6 +9,10 @@
 - 稳定线（`main`）：[v0.3.1...main](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...main)
 - 开发线（`next`）：[v0.3.1...next](https://github.com/OpenFairyGUI/OpenFairyGUI/compare/v0.3.1...next)
 
+新增：
+
+- codegen：新增 `@openfairygui/codegen` 包，提供零运行时依赖的模板引擎、C# 命名与路径工具、稳定哈希和代码文件写入策略；`et-fui-codegen` 改为复用该包，生成产物保持逐字节不变。
+
 ## v0.3.x
 
 ### v0.3.1（[发布页](https://github.com/OpenFairyGUI/OpenFairyGUI/releases/tag/v0.3.1)）

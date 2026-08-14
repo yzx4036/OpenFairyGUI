@@ -1,10 +1,11 @@
 /**
- * et-fui-codegen unit smoke test (template-based codegen).
- * Tests engine.ts + naming.ts + hash.ts + templates.ts.
+ * Template-based codegen unit smoke test.
+ * Tests @openfairygui/codegen plus et-fui-codegen templates.
  */
-import { hashPanelId } from '../plugins/et-fui-codegen/src/hash.js';
-import { normalizeTypeName, normalizeMemberName, ensureCSharpIdentifier } from '../plugins/et-fui-codegen/src/naming.js';
-import { renderTemplate, type TemplateContext } from '../plugins/et-fui-codegen/src/engine.js';
+import {
+    ensureCSharpIdentifier, fnv1a31, normalizeMemberName, normalizeTypeName,
+    renderTemplate, type TemplateContext,
+} from '@openfairygui/codegen';
 import {
     renderComponentBinding, renderPanelEntity, renderPanelSystem,
     renderPanelId, renderFuiBinder,
@@ -50,9 +51,9 @@ console.log('  ✅ PASSED');
 
 // ── 3. hash.ts ──
 console.log('[3/7] hash.ts');
-const id1 = hashPanelId('pkg1', 'comp1');
-check(id1 === hashPanelId('pkg1', 'comp1'), 'deterministic');
-check(id1 !== hashPanelId('pkg1', 'comp2'), 'different inputs');
+const id1 = fnv1a31('pkg1:comp1');
+check(id1 === fnv1a31('pkg1:comp1'), 'deterministic');
+check(id1 !== fnv1a31('pkg1:comp2'), 'different inputs');
 check(id1 > 0, 'positive');
 console.log('  ✅ PASSED (id=%d)', id1);
 

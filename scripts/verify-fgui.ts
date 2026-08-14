@@ -3,7 +3,7 @@
  * Usage: cd E:\_Proj\OpenFairyGUI && npx tsx scripts/verify-fgui.ts
  */
 import { NodeIO } from '@openfairygui/core/node';
-import { buildCodegenOutputs, type EtCodegenOutput } from '../plugins/et-fui-codegen/src/model.js';
+import { buildCodegenOutputs } from '../plugins/et-fui-codegen/src/model.js';
 import { renderComponentBinding, renderPanelEntity, renderPanelSystem,
     renderPanelId, renderFuiBinder } from '../plugins/et-fui-codegen/src/templates.js';
 

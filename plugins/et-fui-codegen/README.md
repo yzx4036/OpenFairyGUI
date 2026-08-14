@@ -2,8 +2,10 @@
 
 `et-fui-codegen` is an OpenFairyGUI publish plugin that replaces the built-in
 Unity code generator with deterministic C# output for ET/FairyGUI projects.
-The plugin has no runtime imports: OpenFairyGUI's Jiti loader can load
-`src/index.ts` directly after this directory is copied into an FGUI project.
+The plugin has a runtime dependency on `@openfairygui/codegen`. Repository and
+`--plugin` loading resolve it through the pnpm workspace. If this plugin is
+copied into an FGUI project, that project must install `@openfairygui/codegen`
+or otherwise make the package resolvable from the copied plugin.
 
 ## Enable the plugin
 
@@ -12,6 +14,13 @@ published:
 
 ```text
 <FGUIProject>/plugins/et-fui-codegen/package.json
+```
+
+Install the runtime package when the plugin directory is deployed outside this
+workspace:
+
+```bash
+npm install @openfairygui/codegen
 ```
 
 The project's `settings/Publish.json` must enable code generation and point

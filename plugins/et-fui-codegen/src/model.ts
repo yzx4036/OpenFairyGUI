@@ -1,13 +1,7 @@
-import type {
-	Component,
-	Document,
-	GComponent,
-	GObject,
-	Package,
-} from '@openfairygui/core';
+import { ensureCSharpIdentifier, normalizeMemberName, normalizeTypeName } from '@openfairygui/codegen';
+import type { Component, Document, GComponent, GObject, Package } from '@openfairygui/core';
 import type { CliCodeGenerationSettings } from '@openfairygui/functions';
 import { hashPanelId } from './hash.js';
-import { ensureCSharpIdentifier, normalizeMemberName, normalizeTypeName } from './naming.js';
 
 export type EtComponentRole = 'view' | 'component' | 'binding';
 export type EtMemberKind = 'child' | 'controller' | 'transition';
@@ -90,7 +84,10 @@ export function buildCodegenOutputs(
 		for (const component of [...pkg.listComponents()].sort(compareComponents)) {
 			const componentName = component.getName().replace(/\.xml$/i, '');
 			const componentTypeName = normalizeTypeName(componentName);
-			const bindingClassName = normalizeMemberName(`${settings.classNamePrefix}${componentTypeName}`, 'FUI_Component');
+			const bindingClassName = normalizeMemberName(
+				`${settings.classNamePrefix}${componentTypeName}`,
+				'FUI_Component',
+			);
 			const previous = seenBindingClasses.get(bindingClassName);
 			if (previous) {
 				throw new Error(
@@ -100,13 +97,14 @@ export function buildCodegenOutputs(
 			seenBindingClasses.set(bindingClassName, componentName);
 
 			const remark = parseRemark(component.getRemark?.() ?? '');
-			const entityBaseName = remark.role === 'binding'
-				? undefined
-				: remark.explicit
-					? componentTypeName
-					: componentTypeName.endsWith('Panel')
+			const entityBaseName =
+				remark.role === 'binding'
+					? undefined
+					: remark.explicit
 						? componentTypeName
-						: `${componentTypeName}Panel`;
+						: componentTypeName.endsWith('Panel')
+							? componentTypeName
+							: `${componentTypeName}Panel`;
 
 			drafts.push({
 				bindingClassName,
@@ -130,8 +128,15 @@ export function buildCodegenOutputs(
 
 	resolveEntityNames(drafts);
 	assignPanelIds(drafts);
-	const generatedByResource = new Map(drafts.map((draft) => [resourceKey(draft.packageId, draft.componentId), draft]));
-	const packagesById = new Map(doc.getRoot().listPackages().map((pkg) => [pkg.getId(), pkg]));
+	const generatedByResource = new Map(
+		drafts.map((draft) => [resourceKey(draft.packageId, draft.componentId), draft]),
+	);
+	const packagesById = new Map(
+		doc
+			.getRoot()
+			.listPackages()
+			.map((pkg) => [pkg.getId(), pkg]),
+	);
 
 	for (const draft of drafts) {
 		draft.members = buildMembers(draft, settings, generatedByResource, packagesById);
@@ -239,7 +244,8 @@ function buildMembers(
 	}
 
 	for (const [index, controller] of draft.component.listControllers().entries()) {
-		if (settings.ignoreNoname && isDefaultMemberName(draft.fairyGuiBaseType, 'controller', controller.getName())) continue;
+		if (settings.ignoreNoname && isDefaultMemberName(draft.fairyGuiBaseType, 'controller', controller.getName()))
+			continue;
 		candidates.push({
 			index,
 			kind: 'controller',

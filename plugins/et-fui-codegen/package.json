@@ -10,11 +10,14 @@
 		".": "./src/index.ts"
 	},
 	"scripts": {
-		"build": "tsdown src/index.ts --format esm --platform neutral --dts",
+		"build": "tsdown src/index.ts --format esm --platform neutral --dts --copy src/templates",
 		"typecheck": "tsc --noEmit -p tsconfig.json",
 		"test": "ava --no-worker-threads",
 		"lint": "biome check src test scripts",
 		"smoke:projzero": "tsx scripts/smoke-projzero.ts"
+	},
+	"dependencies": {
+		"@openfairygui/codegen": "workspace:*"
 	},
 	"devDependencies": {
 		"@openfairygui/core": "workspace:*",

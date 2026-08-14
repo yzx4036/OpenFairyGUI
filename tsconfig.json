@@ -1,6 +1,7 @@
 {
 	"compilerOptions": {
 		"paths": {
+			"@openfairygui/codegen": ["./packages/codegen/src/index.ts"],
 			"@openfairygui/core": ["./packages/core/src/index.ts"],
 			"@openfairygui/core/node": ["./packages/core/src/node.ts"],
 			"@openfairygui/core/project-io": ["./packages/core/src/project-io.ts"],

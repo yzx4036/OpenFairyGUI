@@ -1,0 +1,8 @@
+{
+  "task_id": "20260813-extract-codegen-package",
+  "project": "OpenFairyGUI",
+  "type": "software",
+  "actor": "opencode+codex",
+  "max_attempts": 3,
+  "created": "2026-08-13T00:00:00+08:00"
+}

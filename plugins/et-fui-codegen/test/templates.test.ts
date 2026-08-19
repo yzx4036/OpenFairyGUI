@@ -72,6 +72,31 @@ test.serial('renders a panel entity and system', async (t) => {
 	t.true(system.includes('class LoginPanelSystem'));
 	t.true(system.includes('void OnShow'));
 	t.true(system.includes('void RegisterUIEvent'));
+	// VULN-2: 生命周期转发代码断言
+	for (const method of ['RegisterUIEvent', 'OnShow', 'OnHide', 'BeforeUnload']) {
+		t.regex(system, new RegExp('public static void ' + method + '\\('), method + ' lifecycle method is generated');
+	}
+	t.is(system.match(/foreach \(var child in self\.Children\.Values\)/g)?.length, 4);
+	t.is(system.match(/FUIEventComponent\.Instance\.InvokePanelLifecycle/g)?.length, 4);
+	t.true(system.includes('foreach (var child in self.Children.Values)'), 'lifecycle forwards iterate children');
+	t.true(
+		system.includes('FUIEventComponent.Instance.InvokePanelLifecycle(child, "RegisterUIEvent")'),
+		'RegisterUIEvent forwards via InvokePanelLifecycle',
+	);
+	t.true(
+		system.includes('FUIEventComponent.Instance.InvokePanelLifecycle(child, "OnShow", contextData)'),
+		'OnShow forwards contextData',
+	);
+	t.true(
+		system.includes('FUIEventComponent.Instance.InvokePanelLifecycle(child, "OnHide")'),
+		'OnHide forwards via InvokePanelLifecycle',
+	);
+	t.true(
+		system.includes('FUIEventComponent.Instance.InvokePanelLifecycle(child, "BeforeUnload")'),
+		'BeforeUnload forwards via InvokePanelLifecycle',
+	);
+	// Awake 保持空壳（框架 Awake 分发不走 InvokePanelLifecycle）
+	t.regex(system, /public static void Awake\(this LoginPanel self\) \{ \}/);
 });
 
 test.serial('renders panel ids and the FairyGUI binder', async (t) => {

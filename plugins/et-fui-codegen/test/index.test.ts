@@ -121,6 +121,41 @@ test.serial('genCode keeps legacy warning when preserve detection is unavailable
 	]);
 });
 
+test.serial('genCode emits bindings but no panel artifacts for non-view components', async (t) => {
+	const doc = new Document();
+	const logger = new MemoryLogger();
+	doc.setLogger(logger);
+
+	const pkg = doc.createPackage('MainPkg');
+	pkg.setId('main0001').setGenCode(true).setCodePath('generated');
+	pkg.addResource(doc.createComponent('NoRemarkPanel').setId('comp0001').setExported(true));
+	pkg.addResource(doc.createComponent('ExplicitComp').setId('comp0002').setExported(true).setRemark('Type:Comp'));
+	pkg.addResource(doc.createComponent('InvalidPrefix').setId('comp0003').setExported(true).setRemark('view:xxx'));
+
+	const fs = new MemoryPublishFileSystem();
+	await genCode(doc, SETTINGS, { fs, packages: [pkg] });
+
+	const expectedPaths = [
+		'generated/FUIAutoGen/PanelId.cs',
+		'generated/HotfixView/FUIBinder.cs',
+		'generated/ModelView/MainPkg/FUI_ExplicitComp.cs',
+		'generated/ModelView/MainPkg/FUI_InvalidPrefix.cs',
+		'generated/ModelView/MainPkg/FUI_NoRemarkPanel.cs',
+	];
+	t.deepEqual(fs.writes.slice().sort(), expectedPaths.sort());
+
+	const panelIds = readText(fs, 'generated/FUIAutoGen/PanelId.cs');
+	const binder = readText(fs, 'generated/HotfixView/FUIBinder.cs');
+	for (const name of ['NoRemarkPanel', 'ExplicitComp', 'InvalidPrefix']) {
+		t.false(panelIds.includes(name), name + ' must not receive a PanelId entry');
+		t.true(binder.includes('FUI_' + name + '.URL'), name + ' binding must still be registered');
+	}
+	t.false(fs.files.has('generated/ModelView/MainPkg/NoRemarkPanel.cs'));
+	t.false(fs.files.has('generated/HotfixView/MainPkg/NoRemarkPanelSystem.cs'));
+	t.false(fs.files.has('generated/ModelView/MainPkg/ExplicitComp.cs'));
+	t.false(fs.files.has('generated/HotfixView/MainPkg/ExplicitCompSystem.cs'));
+});
+
 function createFixture(): {
 	doc: Document;
 	fs: MemoryPublishFileSystem;

@@ -38,7 +38,7 @@ OpenFairyGUI 是一个面向 Node.js 和自动化工作流的 FairyGUI 工程 SD
 
 ## Y0Studio 定制（本 fork 特有）
 
-本 fork 在上游基础上叠加 Y0Studio 定制，策略为「定制全部走插件层，不改上游内置逻辑」（详见 [Fork 下游代码生成策略](./docs/fork-codegen-policy.md)）。fork 发布 tag 一律使用 `y0-` 前缀（如 `y0-v0.1.0`），与上游 `v*` tag 区分，不会触发上游 `release.yml`。
+本 fork 在上游基础上叠加 Y0Studio 定制，策略为「定制全部走插件层，不改上游内置逻辑」（详见 [Fork 下游代码生成策略](./docs/fork-codegen-policy.md)）。新设备接入与多 ETPlus 项目使用见 [新设备接入与多项目使用指南](./docs/new-device-multi-project.md)。fork 发布 tag 一律使用 `y0-` 前缀（如 `y0-v0.1.0`），与上游 `v*` tag 区分，不会触发上游 `release.yml`。
 
 | 定制功能 | 说明 |
 |---|---|

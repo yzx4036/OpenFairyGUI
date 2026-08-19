@@ -9,13 +9,34 @@ namespace $base_namespace$
 
 		public static void RegisterUIEvent(this $entity_name$ self)
 		{
-			// Framework-injected UI event bindings belong here.
+			foreach (var child in self.Children.Values)
+			{
+				FUIEventComponent.Instance.InvokePanelLifecycle(child, "RegisterUIEvent");
+			}
 		}
 
-		public static void OnShow(this $entity_name$ self, ArgsDict contextData = null) { }
+		public static void OnShow(this $entity_name$ self, ArgsDict contextData = null)
+		{
+			foreach (var child in self.Children.Values)
+			{
+				FUIEventComponent.Instance.InvokePanelLifecycle(child, "OnShow", contextData);
+			}
+		}
 
-		public static void OnHide(this $entity_name$ self) { }
+		public static void OnHide(this $entity_name$ self)
+		{
+			foreach (var child in self.Children.Values)
+			{
+				FUIEventComponent.Instance.InvokePanelLifecycle(child, "OnHide");
+			}
+		}
 
-		public static void BeforeUnload(this $entity_name$ self) { }
+		public static void BeforeUnload(this $entity_name$ self)
+		{
+			foreach (var child in self.Children.Values)
+			{
+				FUIEventComponent.Instance.InvokePanelLifecycle(child, "BeforeUnload");
+			}
+		}
 	}
 }

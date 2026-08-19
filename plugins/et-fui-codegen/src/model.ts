@@ -98,7 +98,7 @@ export function buildCodegenOutputs(
 
 			const remark = parseRemark(component.getRemark?.() ?? '');
 			const entityBaseName =
-				remark.role === 'binding'
+				remark.role !== 'view'
 					? undefined
 					: remark.explicit
 						? componentTypeName
@@ -332,7 +332,7 @@ function resolveComponentBaseType(component: Component): string {
 
 function parseRemark(value: string): ParsedRemark {
 	const trimmed = value.trim();
-	if (!trimmed) return { explicit: false, layer: 'Normal', role: 'view' };
+	if (!trimmed) return { explicit: false, layer: 'Normal', role: 'component' };
 
 	const values = new Map<string, string>();
 	for (const segment of trimmed.split('|')) {

@@ -107,7 +107,7 @@ async function writeOutput(
 				content: await renderComponentBinding(component, settings),
 				mode: 'overwrite',
 			});
-			if (!component.entityTypeName) continue;
+			if (!component.entityTypeName || component.role !== 'view') continue;
 
 			files.push(
 				{

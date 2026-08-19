@@ -45,6 +45,13 @@
 - **commit**: `967bbf5`
 - **背景**: 合并上游后 `MODULE_NOT_FOUND: jpeg-js` → `pnpm install --no-frozen-lockfile && pnpm build`。
 
+## 2026-08-19 — fork 首个发布 `yzx-v0.1.0`
+
+- **tag**: `yzx-v0.1.0`（annotated，指向 `ed030c3`，已推送 origin）
+- **前缀约定**: fork 自有发布一律用 `yzx-` 前缀——与上游 `v*` tag 分离，且不会误触发继承自上游的 `release.yml`（该 workflow 只监听 `v*` 并强制校验 tag == v+包版本，fork 未改包版本，触发必失败）。`git tag -l 'yzx-*'` 即全部 fork 发布。
+- **内容快照**: 上游 v0.3.1 基线 + et-fui-codegen 插件（三项漏洞修复 + 对抗测试 11/11）+ CLI `--plugin` + bytes 按包子文件夹输出。
+- **验证**: build（`NODE_OPTIONS=--max-old-space-size=16384`）✅ / lint ✅ / et-fui-codegen test 11/11 ✅ / functions 11 项失败为已文档化基线测试债（bytes 子文件夹断言，非回归）。
+
 ## 上游合并基线
 
 - `7af7ab0` merge upstream-release v0.2.5 → test-merge；`03ef5ed` test-merge → develop。

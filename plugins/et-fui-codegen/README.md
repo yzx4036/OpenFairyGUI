@@ -54,8 +54,7 @@ For packages that resolve to the same `codePath`, the plugin writes:
 │   ├── FUI_<Component>.cs
 │   └── <Entity>.cs
 ├── HotfixView/<Package>/
-│   ├── <Entity>System.cs
-│   └── Event/<Entity>EventHandler.cs
+│   └── <Entity>System.cs
 └── HotfixView/FUIBinder.cs
 ```
 
@@ -69,12 +68,13 @@ Component remarks retain the ProjZero classification convention:
 | Remark | Binding | Entity/System | Event/PanelId |
 | --- | --- | --- | --- |
 | `Type:View|Layer:<layer>` | yes | yes | yes |
-| `Type:Comp|Layer:<layer>` | yes | yes | no |
+| `Type:Comp|Layer:<layer>` | yes | no | no |
 | `Type:None` | yes | no | no |
-| no `remark` | yes | yes (panel default) | yes |
+| no `remark` | yes | no (component default) | no |
 
-The no-remark fallback implements the generic context contract where every
-component is treated as a panel. Explicit ProjZero remarks take precedence.
+The no-remark fallback treats a component as a plain `Type:Comp` component:
+only the `FUI_` binding is generated. Explicit ProjZero remarks take
+precedence, and only `Type:View` produces Entity/System/PanelId artifacts.
 
 `PanelId` values use 32-bit FNV-1a over `packageId:componentId`, are masked to
 a positive non-zero C# `int`, and are collision-checked. This deliberately

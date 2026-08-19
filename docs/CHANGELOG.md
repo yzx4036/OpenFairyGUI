@@ -57,6 +57,11 @@
 - **动作**: `y0-v0.1.0` 由 `ed030c3` 重置到发布时的 main HEAD（完整覆盖 README Y0Studio 定制章节 + 本条记录），本地与远端 tag 同步替换。
 - **原因**: tag 应覆盖完整发布内容（含 README 定制功能文档），与正式发布的 main 保持一致。
 
+## 2026-08-19 — `y0-v0.1.0` 再次重置指向 main HEAD
+
+- **动作**: main 因新增 `docs/new-device-multi-project.md`（新设备与多项目指南）前进，`y0-v0.1.0` 再次重置到当前 main HEAD，本地与远端 tag 同步替换。
+- **原因**: 维持「tag = main HEAD」惯例，确保发布 tag 覆盖全部文档。
+
 ## 上游合并基线
 
 - `7af7ab0` merge upstream-release v0.2.5 → test-merge；`03ef5ed` test-merge → develop。

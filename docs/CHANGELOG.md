@@ -52,6 +52,11 @@
 - **内容快照**: 上游 v0.3.1 基线 + et-fui-codegen 插件（三项漏洞修复 + 对抗测试 11/11）+ CLI `--plugin` + bytes 按包子文件夹输出。
 - **验证**: build（`NODE_OPTIONS=--max-old-space-size=16384`）✅ / lint ✅ / et-fui-codegen test 11/11 ✅ / functions 11 项失败为已文档化基线测试债（bytes 子文件夹断言，非回归）。
 
+## 2026-08-19 — `y0-v0.1.0` 重置指向 main HEAD
+
+- **动作**: `y0-v0.1.0` 由 `ed030c3` 重置到发布时的 main HEAD（完整覆盖 README Y0Studio 定制章节 + 本条记录），本地与远端 tag 同步替换。
+- **原因**: tag 应覆盖完整发布内容（含 README 定制功能文档），与正式发布的 main 保持一致。
+
 ## 上游合并基线
 
 - `7af7ab0` merge upstream-release v0.2.5 → test-merge；`03ef5ed` test-merge → develop。

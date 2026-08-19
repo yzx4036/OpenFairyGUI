@@ -36,6 +36,57 @@ OpenFairyGUI 是一个面向 Node.js 和自动化工作流的 FairyGUI 工程 SD
 | 发布与恢复 | 发布运行时资源，并从可信本地产物执行受限恢复 |
 | 工具集成 | 提供 CLI、stateful backend runtime 与 MCP adapter |
 
+## Y0Studio 定制（本 fork 特有）
+
+本 fork 在上游基础上叠加 Y0Studio 定制，策略为「定制全部走插件层，不改上游内置逻辑」（详见 [Fork 下游代码生成策略](./docs/fork-codegen-policy.md)）。fork 发布 tag 一律使用 `y0-` 前缀（如 `y0-v0.1.0`），与上游 `v*` tag 区分，不会触发上游 `release.yml`。
+
+| 定制功能 | 说明 |
+|---|---|
+| et-fui-codegen 插件 | FairyGUI → ET（ETPlus/ProjZero）C# 确定性代码生成，发布时排他接管内置生成 |
+| `ofgui publish --plugin` | 显式加载 FGUI 工程目录之外的插件目录（与工程内 `plugins/` 自动发现合并） |
+| bytes 按包分子文件夹 | Unity 发布（`fileExtension === 'bytes'`）时产物输出到 `{outputDir}/{PkgName}/`，对齐 `Bundles/FUI/{Pkg}/` 约定 |
+| `@openfairygui/codegen` 包 | 零运行时依赖的模板引擎、命名、哈希与代码写入策略，供插件复用 |
+
+### 用法一：发布 + ET 代码生成（ProjZero 实战链路）
+
+CLI 生成，Unity 搬运两段式：
+
+```bash
+# 1. 发布二进制产物 + 插件生成代码（在仓库根执行）
+ofgui publish FGUIProject -o "$(pwd)/Unity/Assets/Bundles/FUI" -t unity
+#    bytes → Unity/Assets/Bundles/FUI/<Pkg>/
+#    生成代码 → Generated/FUI/{FUIAutoGen,ModelView,HotfixView}/（gitignored）
+
+# 2. Unity 菜单 BuildEditor →「同步 FUI 生成代码」把 Generated/FUI 搬进双 asmdef 目录并重建 UIPackageMapping.bytes
+# 3. F6 编译
+```
+
+插件启用需两个开关同时打开：工程 `settings/Publish.json` 的 `codeGeneration.allowGenCode` + 各包 `package.xml` 的 `<publish genCode="true">`。
+
+生成产物契约（`Generated/FUI/`）：
+
+```text
+├── FUIAutoGen/PanelId.cs          # 32 位 FNV-1a(packageId:componentId)，每次覆盖
+├── ModelView/<Package>/FUI_*.cs   # 绑定类，每次覆盖
+├── ModelView/<Package>/<Entity>.cs
+├── HotfixView/<Package>/<Entity>System.cs   # Entity/System 仅缺失时生成，保护业务代码
+└── HotfixView/FUIBinder.cs
+```
+
+remark 分类约定：`Type:View|Layer:*` → 完整面板（Entity/System/PanelId）；`Type:Comp` / `Type:None` / 无 remark → 仅绑定类。
+
+### 用法二：外部插件加载
+
+```bash
+ofgui publish ./MyProject --output ./release --plugin ../shared-plugins/et-fui-codegen
+```
+
+插件运行时依赖 `@openfairygui/codegen`；插件复制进 FGUI 工程时，该工程需自行安装此包。
+
+### 用法三：新增目标框架插件
+
+无需改动本 fork 任何现有文件：新建 `plugins/<target>-codegen/`，实现 `genCode(doc, settings, options)` 并 `export default { genCode }`，放入工程 `plugins/` 即自动接管内置生成。详见 [fork-codegen-policy.md](./docs/fork-codegen-policy.md)。
+
 ## 快速开始
 
 安装脚本侧包：

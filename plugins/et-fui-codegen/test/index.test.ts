@@ -36,6 +36,12 @@ class MemoryPublishFileSystem implements PublishFileSystem {
 		return this.files.has(path);
 	}
 
+	async readFileRaw(path: string): Promise<Uint8Array> {
+		const bytes = this.files.get(path);
+		if (bytes === undefined) throw new Error(`ENOENT: ${path}`);
+		return bytes.slice();
+	}
+
 	join(...paths: string[]): string {
 		return paths.filter(Boolean).join('/').replace(/\/+/g, '/');
 	}
@@ -98,7 +104,7 @@ test.serial('genCode overwrites automatic files and preserves Entity/System file
 		t.is(readText(fs, path), `user preserved: ${path}`);
 	}
 	t.deepEqual(logger.infos, [
-		'et-fui-codegen: Preserved 2 existing Entity/System file(s).',
+		'et-fui-codegen: Merged 0 region-marked Entity file(s), preserved 1 marker-less Entity file(s) + 1 System file(s).',
 		'et-fui-codegen: Generated ET/FairyGUI code into generated.',
 	]);
 	t.deepEqual(logger.warnings, []);
@@ -114,7 +120,7 @@ test.serial('genCode keeps legacy warning when preserve detection is unavailable
 
 	await genCode(doc, SETTINGS, { ...options, fs: fsWithoutDetection });
 
-	t.is(fs.writes.length, 5);
+	t.is(fs.writes.length, 4);
 	t.deepEqual(logger.infos, ['et-fui-codegen: Generated ET/FairyGUI code into generated.']);
 	t.deepEqual(logger.warnings, [
 		'et-fui-codegen: Host filesystem cannot detect existing files; Entity/System preservation is unavailable.',

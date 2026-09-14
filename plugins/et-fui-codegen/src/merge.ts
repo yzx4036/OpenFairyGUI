@@ -51,7 +51,12 @@ export function mergeRegionContent(existing: string, generated: string, regionId
 		const freshStart = generated.indexOf(begin);
 		const freshEnd = generated.indexOf(end, freshStart + begin.length);
 		if (freshStart < 0 || freshEnd < 0) continue; // render no longer emits this region
-		const freshBlock = generated.slice(freshStart, freshEnd + end.length);
+		const freshRawEnd = freshEnd + end.length;
+		let freshBlockEnd = freshRawEnd;
+		// END 标记后若紧跟换行则一并包含，避免替换后与后续代码挤在同一行
+		if (freshBlockEnd < generated.length && generated[freshBlockEnd] === '\r') freshBlockEnd++;
+		if (freshBlockEnd < generated.length && generated[freshBlockEnd] === '\n') freshBlockEnd++;
+		const freshBlock = generated.slice(freshStart, freshBlockEnd);
 
 		const pattern = regionPattern(regionId);
 		if (pattern.test(merged)) {

@@ -80,7 +80,12 @@ async function loadNodePublishPlugins(document: Document, assetsPath: string | u
 	const projectDir = document.getProjectDir?.() || (assetsPath ? resolveProjectBasePath(assetsPath) : '');
 	if (!projectDir) return [];
 	const path = await importNative<typeof import('node:path')>('node:path');
-	return loadPlugins(document, path.join(projectDir, 'plugins'));
+	// Resolve plugin scan dir: PublishSettings.pluginsDir when set, otherwise the
+	// legacy `plugins/` directory. Keeping the default stable avoids breaking existing
+	// projects that rely on auto-discovery.
+	const settings = (document.getRoot().getSettings?.() ?? {}) as { publish?: { pluginsDir?: string } };
+	const pluginsDirName = settings.publish?.pluginsDir || 'plugins';
+	return loadPlugins(document, path.join(projectDir, pluginsDirName));
 }
 
 async function publishToStagedOutput(output: string, run: (staging: string) => Promise<void>): Promise<void> {

@@ -40,8 +40,9 @@ async function writePlugin(
 	pluginName: string,
 	source: string,
 	manifest: Record<string, unknown> = {},
+	pluginsSubDir = 'plugins',
 ): Promise<void> {
-	const pluginDir = path.join(projectDir, 'plugins', pluginName);
+	const pluginDir = path.join(projectDir, pluginsSubDir, pluginName);
 	await fs.mkdir(pluginDir, { recursive: true });
 	await fs.writeFile(
 		path.join(pluginDir, 'package.json'),
@@ -390,6 +391,77 @@ test('publishNode: failureMode warn explicitly preserves fallback behavior', asy
 		});
 
 		t.truthy(await fs.stat(path.join(tmpDir, 'generated', 'DemoPkg', 'UI_Main.cs')));
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('publishNode: discovers plugins from legacy plugins/ by default (regression)', async (t) => {
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-default-plugins-dir-'));
+
+	try {
+		const doc = createCodegenDocument(tmpDir);
+		// Manifest without explicit pluginsDir → legacy `plugins/` is scanned.
+		await writePlugin(
+			tmpDir,
+			'legacy-default-plugin',
+			`
+export default {
+	async genCode(doc, settings, options) {
+		await options.fs.writeFileRaw(options.fs.join(doc.getProjectDir(), 'legacy-default.txt'), new TextEncoder().encode('legacy-default-found'));
+	}
+};
+`,
+		);
+
+		await publishNode({
+			document: doc,
+			output: path.join(tmpDir, 'release'),
+		});
+
+		t.is(await fs.readFile(path.join(tmpDir, 'legacy-default.txt'), 'utf-8'), 'legacy-default-found');
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('publishNode: honors PublishSettings.pluginsDir for plugin discovery (OpenFairyGUI#2)', async (t) => {
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-cli-plugins-dir-'));
+
+	try {
+		// Plugin lives in cli-plugins/, NOT plugins/ (which FairyGUI editor scans as Lua).
+		const doc = createCodegenDocument(tmpDir);
+		doc.getRoot().setSettings({
+			publish: {
+				codeGeneration: {
+					allowGenCode: true,
+					codePath: 'generated',
+					codeType: '',
+				},
+				pluginsDir: 'cli-plugins',
+			},
+		} as RootProjectSettings);
+
+		await writePlugin(
+			tmpDir,
+			'cli-plugins-plugin',
+			`
+export default {
+	async genCode(doc, settings, options) {
+		await options.fs.writeFileRaw(options.fs.join(doc.getProjectDir(), 'cli-plugins-found.txt'), new TextEncoder().encode('cli-plugins-found'));
+	}
+};
+`,
+			{},
+			'cli-plugins',
+		);
+
+		await publishNode({
+			document: doc,
+			output: path.join(tmpDir, 'release'),
+		});
+
+		t.is(await fs.readFile(path.join(tmpDir, 'cli-plugins-found.txt'), 'utf-8'), 'cli-plugins-found');
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}

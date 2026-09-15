@@ -41,6 +41,26 @@ test('project validation treats package names as portable identities', (t) => {
 	t.true(validateUamProject(project).some((diagnostic) => diagnostic.code === 'duplicate_package_name'));
 });
 
+test('project validation warns about touch-opaque top layer views', (t) => {
+	const project = createMinimalUamProject('validation');
+	const component = project.packages[0]!.resources[1]!;
+	if (component.kind !== 'component') throw new Error('Expected component fixture');
+	component.component.properties.remark = 'Type:View|Layer:Top';
+
+	const diagnostics = validateUamProject(project);
+	const warning = diagnostics.find((diagnostic) => diagnostic.code === 'top_view_opaque_blocks_touches');
+	t.truthy(warning);
+	t.is(warning!.severity, 'warning');
+	t.true(warning!.path.endsWith('.component.properties.opaque'));
+
+	component.component.properties.opaque = false;
+	t.false(validateUamProject(project).some((diagnostic) => diagnostic.code === 'top_view_opaque_blocks_touches'));
+
+	component.component.properties.opaque = true;
+	component.component.properties.remark = 'Type:View|Layer:Normal';
+	t.false(validateUamProject(project).some((diagnostic) => diagnostic.code === 'top_view_opaque_blocks_touches'));
+});
+
 test('transaction lifecycle preflight reuses project reference checks', (t) => {
 	const project = createMinimalUamProject('validation');
 	const image = project.packages[0]!.resources[0]!;

@@ -139,7 +139,7 @@
 | `restrictSize` |  | 根组件尺寸限制 |
 | `overflow` |  | 根组件 overflow 模式 |
 | `clipSoftness` |  | 裁剪软边 |
-| `opaque` |  | 是否不透明 |
+| `opaque` |  | 是否不透明（命中拦截）。**默认 `true`**：组件范围内未命中子元素的点击会落在组件自身，`Type:View\|Layer:Top` 的全屏 View 会因此吞掉下层全部点击；被动覆盖层（HUD/横幅/提示）应显式 `opaque="false"`（校验码 `top_view_opaque_blocks_touches`） |
 | `mask` |  | 遮罩目标 |
 | `reversedMask` |  | 反向遮罩 |
 | `hitTest` |  | 命中测试资源 |

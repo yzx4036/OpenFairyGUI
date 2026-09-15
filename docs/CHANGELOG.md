@@ -62,6 +62,16 @@
 - **动作**: main 因新增 `docs/new-device-multi-project.md`（新设备与多项目指南）前进，`y0-v0.1.0` 再次重置到当前 main HEAD，本地与远端 tag 同步替换。
 - **原因**: 维持「tag = main HEAD」惯例，确保发布 tag 覆盖全部文档。
 
+## 2026-09-15 — 校验增强：Top 层 View 的 opaque 点击拦截告警（fork 特性）
+
+### [feat] validation: `top_view_opaque_blocks_touches` 诊断（warning）
+
+- **文件**: `packages/core/src/validation.ts`（新增诊断码）、`packages/core/src/uam/validate.ts`（新规则 + `pushIssue` 支持 warning 级别）、`packages/core/test/project-validation.test.ts`（新测试）
+- **行为**: `remark` 为 `Type:View|Layer:Top` 且 `opaque === true` 的组件在 `ofgui validate` 中报告 `warning` 诊断。
+- **背景**: FairyGUI 命中测试在组件范围内未命中子元素时返回组件自身（`Container.HitTest_Container`: `target == null && opaque && rect.Contains(point) → target = this`）；全屏 View 因此会吞掉下层（Normal/Scene/Background）全部点击——实机表现为「按钮能看不能点、连按下态缩放都没有」。该问题在 ProjZero 的 Banner（Top 层 1080×2344 被动覆盖层，漏写 `opaque="false"`）上真实发生并排查多轮，故在工具侧加告警防复发。
+- **影响**: 仅告警（`warning`，不影响 `validate` 退出码与 `status`）；同层 View 若不是被动覆盖层（模态/引导层有意拦截）可忽略。上游不含此规则，属 fork 增强。
+- **验证**: `pnpm exec ava packages/core/test/project-validation.test.ts`（新增用例：Top 层告警 / `opaque="false"` 与 `Layer:Normal` 不告警）；`pnpm typecheck`、`biome lint`.
+
 ## 上游合并基线
 
 - `7af7ab0` merge upstream-release v0.2.5 → test-merge；`03ef5ed` test-merge → develop。

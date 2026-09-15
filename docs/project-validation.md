@@ -27,6 +27,8 @@ SVG 源文件校验接受标准的 `xmlns="http://www.w3.org/2000/svg"` 命名�
 
 原始 component XML 的 `size`、`xy`、`restrictSize`、边距、`clipSoftness`、设计图偏移及 `gearXY` / `gearSize` 整数部分若不是有符号 32 位整数，会报告 `desktop_incompatible_geometry`。缩放、旋转、透明度、pivot、skew 和 gear 百分比等浮点字段不受此规则限制；检查只报告问题，不修改源工程。
 
+（fork 增强）`remark` 为 `Type:View|Layer:Top` 的组件若保持 `opaque`（默认 `true`），会报告 `top_view_opaque_blocks_touches` 警告：FairyGUI 命中测试在组件范围内未命中子元素时返回组件自身，全屏 View 会因此吞掉下层（Normal/Scene/Background）全部点击。被动覆盖层（HUD/横幅/提示条）应显式 `opaque="false"` 并让装饰元素保持 `touchable="false"`；确需拦截的模态/引导层可忽略此警告。该诊断仅为 `warning`，不影响验证 `status` 与退出码。
+
 当前纳入严格检查的已建模字段在进入宽松读取器前执行词法检查：布尔值接受 `true`、`false`、`1`、`0`；浮点值必须是有限十进制数，元组长度必须准确；透明度必须在 `0..1`；整数必须符合字段的 `Int32` 约束；枚举必须是当前读取器正式支持的取值。失败时报告 `invalid_project_value`，避免 `parseInt`、`parseFloat` 或默认枚举分支把错误值静默改成看似有效的 UAM。
 
 ## API

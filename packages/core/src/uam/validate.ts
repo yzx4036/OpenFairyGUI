@@ -17,15 +17,28 @@ import type {
 	UamValidationIssue,
 } from './model.js';
 import { normalizeResourceFolderPath, resourceFolderParentPath } from '../utils/resource-folder.js';
-import type { ProjectDiagnosticCode } from '../validation.js';
+import type { ProjectDiagnosticCode, ProjectDiagnosticSeverity } from '../validation.js';
 
 function pushIssue(
 	issues: UamValidationIssue[],
 	path: string,
 	message: string,
 	code: ProjectDiagnosticCode = 'invalid_uam',
+	severity: ProjectDiagnosticSeverity = 'error',
 ): void {
-	issues.push({ severity: 'error', code, path, message });
+	issues.push({ severity, code, path, message });
+}
+
+/** fork: 读取 `Type:View|Layer:Top` remark 方言（et-fui-codegen / ET FUI 约定）中的一段。 */
+function readRemarkSegment(remark: string, key: string): string {
+	for (const segment of remark.split('|')) {
+		const separator = segment.indexOf(':');
+		if (separator < 0) continue;
+		if (segment.slice(0, separator).trim().toLowerCase() === key) {
+			return segment.slice(separator + 1).trim();
+		}
+	}
+	return '';
 }
 
 export function isFiniteUamPoint(value: unknown): boolean {
@@ -882,6 +895,20 @@ export function validateUamProject(project: UamProject): UamValidationIssue[] {
 			const component = resource.component;
 			if (!isValidUamComponentProperties(component.properties)) {
 				pushIssue(issues, `${resourcePath}.component.properties`, 'Component properties must be a complete valid property snapshot.');
+			}
+			// fork: Layer:Top 的 View 若保持 opaque（默认 true），其范围内未命中子元素的点击会被 View 自身
+			// 吞掉，下层（Normal/Scene/Background）全部点不到；被动覆盖层（HUD/横幅/提示）必须显式
+			// opaque="false" 并给装饰元素 touchable="false"。
+			if (component.properties.opaque === true
+				&& readRemarkSegment(component.properties.remark ?? '', 'type').toLowerCase() === 'view'
+				&& readRemarkSegment(component.properties.remark ?? '', 'layer').toLowerCase() === 'top') {
+				pushIssue(
+					issues,
+					`${resourcePath}.component.properties.opaque`,
+					`Top layer view "${resource.name}" is touch-opaque (opaque defaults to true): touches that miss its children land on the view itself and never reach lower layers. Passive overlays must declare opaque="false"; keep the warning only for overlays that intentionally block.`,
+					'top_view_opaque_blocks_touches',
+					'warning',
+				);
 			}
 			const childIds = new Set<string>();
 			const groupIds = new Set<string>();

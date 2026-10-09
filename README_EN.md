@@ -59,6 +59,10 @@ MCP provides Backend session editing. Publishing saved projects and limited reco
 
 [Try it online](https://editor.fairygui.dev/) · [GitHub repository](https://github.com/OpenFairyGUI/FairyGUI-Editor-Online)
 
+## About this fork
+
+This repository is a fork of the upstream [OpenFairyGUI](https://github.com/OpenFairyGUI/OpenFairyGUI) project: it continuously tracks upstream releases while maintaining additional Y0Studio features, kept isolated from upstream files so merges stay clean. See [Fork Customization Overview](./docs/fork-overview.md) for the feature inventory, design principles, and step-by-step tutorials.
+
 ## Go further
 
 | Direction | Documentation |
@@ -66,7 +70,7 @@ MCP provides Backend session editing. Publishing saved projects and limited reco
 | Setup and examples | [Agent Setup Guide](./docs/en/guide/getting-started.md) · [Packages and Tools](./docs/en/guide/packages.md) · [Runnable Examples](./docs/en/guide/examples.md) |
 | Agent contracts and diagnosis | [Installed Documentation](./docs/en/guide/installed-docs.md) · [Contract Discovery](./docs/en/guide/contracts.md) · [Diagnostics and Recovery](./docs/en/guide/diagnostics.md) · [Task Evaluations](./docs/en/guide/agent-evaluations.md) |
 | Architecture and protocols | [Architecture Overview](./docs/en/architecture-overview.md) · [Project Validation](./docs/project-validation.md) · [Editor Publish Settings](./docs/en/editor-publish-settings.md) · [Project XML Attribute Protocol](./docs/en/project-xml-attribute-reference.md) · [FairyGUI Binary Package Format](./docs/en/fairygui-binary-package-format.md) · [Complete Documentation Index](./docs/en/README.md) · [API Reference](https://fairygui.dev/api/) |
-| Fork customization | [Fork Codegen Policy](./docs/fork-codegen-policy.md) · [New Device and Multi-Project Guide](./docs/new-device-multi-project.md) |
+| Fork customization | [Fork Customization Overview](./docs/fork-overview.md) · [Publish Layout and Project Recovery](./docs/fork-publish-and-restore.md) · [ET Codegen Plugin Guide](./docs/fork-et-codegen-guide.md) · [Fork Codegen Policy](./docs/fork-codegen-policy.md) · [New Device and Multi-Project Guide](./docs/new-device-multi-project.md) |
 | Contributing | [Development and Verification](./docs/en/guide/development.md) · [Development Task Recipes](./docs/en/guide/task-recipes.md) |
 
 ## Status and boundaries

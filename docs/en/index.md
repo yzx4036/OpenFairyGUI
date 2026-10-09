@@ -37,6 +37,10 @@ For scripts and editor integrations, choose CLI, Backend, or SDK entrypoints in 
 
 [Try it online](https://editor.fairygui.dev/) · [GitHub repository](https://github.com/OpenFairyGUI/FairyGUI-Editor-Online)
 
+## About this fork
+
+This repository is a fork of the upstream [OpenFairyGUI](https://github.com/OpenFairyGUI/OpenFairyGUI) project: it continuously tracks upstream releases while maintaining additional Y0Studio features. See the [Fork Customization Overview](/fork-overview) for the inventory, design principles, and tutorials.
+
 ## Relationship to FairyGUI
 
 OpenFairyGUI is an unofficial open-source project built around FairyGUI project formats and tooling; it is not an official FairyGUI product. The FairyGUI name, logo, and related brand assets belong to their respective owners. For official products and information, visit the [FairyGUI website](https://fairygui.com/).

@@ -49,6 +49,16 @@ export default withMermaid(defineConfig({
 								{ text: '二进制封包协议', link: '/fairygui-binary-package-format' },
 							],
 						},
+						{
+							text: 'Fork 定制',
+							items: [
+								{ text: 'Fork 定制总览', link: '/fork-overview' },
+								{ text: '发布布局与工程还原', link: '/fork-publish-and-restore' },
+								{ text: 'ET 代码生成插件使用指南', link: '/fork-et-codegen-guide' },
+								{ text: 'Fork 下游代码生成策略', link: '/fork-codegen-policy' },
+								{ text: '新设备接入与多项目使用指南', link: '/new-device-multi-project' },
+							],
+						},
 					],
 				},
 			},

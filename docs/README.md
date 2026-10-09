@@ -23,6 +23,9 @@
 | [编辑器发布设置](./editor-publish-settings.md) | 说明 FairyGUI 编辑器发布设置的结构、字段、默认值与写回规则 |
 | [Publish 插件](./publish-plugins.md) | 说明 OpenFairyGUI publish 插件目录、manifest、生命周期、降级规则，以及与 FairyGUI 编辑器插件的关系 |
 | [Fork 下游代码生成策略](./fork-codegen-policy.md) | 说明本 fork 的插件接管代码生成机制、与上游内置 codegen 的关系，以及上游同步影响面 |
+| [Fork 定制总览](./fork-overview.md) | 本 fork 新增/修改功能清单、设计原则（本地优先/定制隔离）与校验增强（Top 层 opaque 告警） |
+| [发布布局与工程还原](./fork-publish-and-restore.md) | bytes 子文件夹布局设计原理、pluginsDir、restore 子文件夹与路径边界安全；发布/恢复端到端教程 |
+| [ET 代码生成插件使用指南](./fork-et-codegen-guide.md) | et-fui-codegen 设计原理（overwrite/merge/preserve 三类语义、区域标记协议）、配置与端到端教程 |
 | [发布产物恢复边界](./published-project-restore-limitations.md) | 记录可信本地发布物的受限恢复范围、安全约束与不可稳定恢复的内容 |
 | [Project XML 属性协议](./project-xml-attribute-reference.md) | 汇总 `package.xml`、`component.xml` 及结构节点当前正式支持的 XML 属性协议 |
 | [Project XML DisplayList Tag 对齐](./project-xml-displaylist-variants.md) | 固定 `component.xml` `displayList` 的原始 XML tag、容器 variant 与 editor `DisplayListItem.type` 对齐口径 |

@@ -21,6 +21,9 @@ This directory contains the English documentation used by the static website. It
 | [Editor Publish Settings](./editor-publish-settings.md) | Actual editor setting files, properties, defaults, output resolution, and current publish behavior. |
 | [Publish Plugins](./publish-plugins.md) | Plugin directories, manifests, lifecycle hooks, fallback behavior, and the boundary with FairyGUI Editor plugins. |
 | [Fork Codegen Policy](../fork-codegen-policy.md) | Fork-specific plugin takeover for code generation, its relationship with the upstream built-in codegen, and upstream sync impact. |
+| [Fork Customization Overview](../fork-overview.md) | Inventory of this fork's features and changes, design principles, and the top-layer opaque touch-blocking warning. |
+| [Publish Layout and Project Recovery](../fork-publish-and-restore.md) | Per-package bytes subfolder layout, pluginsDir, restore subfolder support and path-boundary safety, with end-to-end tutorials. |
+| [ET Codegen Plugin Guide](../fork-et-codegen-guide.md) | et-fui-codegen design (overwrite/merge/preserve semantics, region markers), configuration and end-to-end tutorial. |
 | [Published Project Recovery Limits](./published-project-restore-limitations.md) | Supported recovery scope, safety constraints, and information that cannot be reconstructed reliably from published artifacts. |
 | [Project XML Attribute Protocol](./project-xml-attribute-reference.md) | Canonical Project XML attributes, aliases, and node-level semantics. |
 | [Project XML DisplayList Tag Alignment](./project-xml-displaylist-variants.md) | Alignment among raw XML tags, protocol variants, and editor `DisplayListItem.type` values. |

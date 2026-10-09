@@ -23,7 +23,7 @@
 
 ## Y0Studio 定制（本 fork 特有）
 
-本 fork 在上游基础上叠加 Y0Studio 定制，策略为「定制全部走插件层，不改上游内置逻辑」（详见 [Fork 下游代码生成策略](./docs/fork-codegen-policy.md)）。新设备接入与多 ETPlus 项目使用见 [新设备接入与多项目使用指南](./docs/new-device-multi-project.md)。fork 发布 tag 一律使用 `y0-` 前缀（如 `y0-v0.1.0`），与上游 `v*` tag 区分，不会触发上游 `release.yml`。
+本仓库是上游 [OpenFairyGUI](https://github.com/OpenFairyGUI/OpenFairyGUI) 的 **fork 分支**：在持续跟踪上游发布（`upstream-release` → `test-merge` → `develop`）的同时，维护 Y0Studio 额外新增的功能与修改；定制策略为「全部走插件层，不改上游内置逻辑」（详见 [Fork 下游代码生成策略](./docs/fork-codegen-policy.md)）。完整清单与教程见 [Fork 定制总览](./docs/fork-overview.md)；新设备接入与多 ETPlus 项目使用见 [新设备接入与多项目使用指南](./docs/new-device-multi-project.md)。fork 发布 tag 一律使用 `y0-` 前缀（如 `y0-v0.2.3`），与上游 `v*` tag 区分，不会触发上游 `release.yml`。
 
 | 定制功能 | 说明 |
 |---|---|
@@ -48,13 +48,13 @@ ofgui publish FGUIProject -o "$(pwd)/Unity/Assets/Bundles/FUI" -t unity
 
 插件启用需两个开关同时打开：工程 `settings/Publish.json` 的 `codeGeneration.allowGenCode` + 各包 `package.xml` 的 `<publish genCode="true">`。
 
-生成产物契约（`Generated/FUI/`）：
+生成产物契约（`Generated/FUI/`，详见 [ET 代码生成插件使用指南](./docs/fork-et-codegen-guide.md)）：
 
 ```text
 ├── FUIAutoGen/PanelId.cs          # 32 位 FNV-1a(packageId:componentId)，每次覆盖
 ├── ModelView/<Package>/FUI_*.cs   # 绑定类，每次覆盖
-├── ModelView/<Package>/<Entity>.cs
-├── HotfixView/<Package>/<Entity>System.cs   # Entity/System 仅缺失时生成，保护业务代码
+├── ModelView/<Package>/<Entity>.cs          # 区域标记合并：标记区内替换，区外手写保留
+├── HotfixView/<Package>/<Entity>System.cs   # 存在即不覆盖（手写业务工作区）
 └── HotfixView/FUIBinder.cs
 ```
 
@@ -117,7 +117,7 @@ MCP 提供 Backend 会话编辑能力；发布已保存工程与可信本地产�
 | 接入与示例 | [Agent 接入指南](./docs/guide/getting-started.md) · [包与工具](./docs/guide/packages.md) · [可运行示例](./docs/guide/examples.md) |
 | Agent 契约与诊断 | [安装版本文档](./docs/guide/installed-docs.md) · [契约查询](./docs/guide/contracts.md) · [诊断与恢复](./docs/guide/diagnostics.md) · [任务评测](./docs/guide/agent-evaluations.md) |
 | 架构与协议 | [架构总览](./docs/architecture-overview.md) · [工程验证](./docs/project-validation.md) · [编辑器发布设置](./docs/editor-publish-settings.md) · [Project XML 属性协议](./docs/project-xml-attribute-reference.md) · [FairyGUI 二进制包格式](./docs/fairygui-binary-package-format.md) · [完整文档索引](./docs/README.md) · [API Reference](https://fairygui.dev/api/) |
-| Fork 定制 | [Fork 下游代码生成策略](./docs/fork-codegen-policy.md) · [新设备接入与多项目使用指南](./docs/new-device-multi-project.md) |
+| Fork 定制 | [Fork 定制总览](./docs/fork-overview.md) · [发布布局与工程还原](./docs/fork-publish-and-restore.md) · [ET 代码生成插件使用指南](./docs/fork-et-codegen-guide.md) · [Fork 下游代码生成策略](./docs/fork-codegen-policy.md) · [新设备接入与多项目使用指南](./docs/new-device-multi-project.md) |
 | 参与开发 | [开发与验证](./docs/guide/development.md) · [开发任务指引](./docs/guide/task-recipes.md) |
 
 ## 当前状态与边界

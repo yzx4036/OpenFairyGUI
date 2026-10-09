@@ -37,6 +37,10 @@ features:
 
 [在线体验](https://editor.fairygui.dev/) · [GitHub 仓库](https://github.com/OpenFairyGUI/FairyGUI-Editor-Online)
 
+## 关于本仓库
+
+本仓库 `yzx4036/OpenFairyGUI` 是上游 [OpenFairyGUI](https://github.com/OpenFairyGUI/OpenFairyGUI) 的 **fork 分支**：在持续跟踪上游发布的同时，维护 Y0Studio 额外新增的功能与修改。定制清单、设计原理与使用教程见 [Fork 定制总览](/fork-overview)。
+
 ## 与 FairyGUI 的关系
 
 OpenFairyGUI 是围绕 FairyGUI 工程格式与工具链开发的非官方开源项目，并非 FairyGUI 官方产品。“FairyGUI”名称、Logo 及相关品牌标识的权利归其权利人所有；官方产品与信息请访问 [FairyGUI 官网](https://fairygui.com/)。

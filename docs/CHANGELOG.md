@@ -147,6 +147,16 @@
 - **内容快照**: `y0-v0.2.1` 全量内容 + GitHub Pages 文档站开通与 fork 基路径适配（`9c38e90`、`01a0b0d`，见上节）；issue #1「生成代码区域标记 + 正则局部替换（保护手写业务代码）」闭环关闭（实现提交 `575ade8`/`e176abe`/`671254d`，验收证据见 issue 关闭说明）。
 - **验证**: 文档站部署 run `37907788332` 绿（57s）；站点 `https://yzx4036.github.io/OpenFairyGUI/` 200、页面引用资源逐项 200、`og:image` 指向 fork 站点；全量门沿用 `y0-v0.2.1` 结论（648 全绿、验收矩阵 18/18）；CI（main push）与 Deploy docs 工作流随本次推送实跑核验。
 
+## 2026-10-09 — fork 发布 `y0-v0.2.3`（文档站 fork 定制专区）
+
+- **tag**: `y0-v0.2.3`（annotated，指向发布时 main HEAD）
+- **内容快照**: `y0-v0.2.2` 全量内容 + 文档站 fork 定制专区（issue #3，提交 `b506ec8`/`0f259dc`）：
+  - 新增三页：`fork-overview`（功能/修改清单、设计原则、Top 层 opaque 告警原理与处置）、`fork-publish-and-restore`（bytes 子文件夹设计原理、`pluginsDir`、restore 子目录与路径边界安全、发布/恢复端到端教程）、`fork-et-codegen-guide`（overwrite/merge/preserve 三类写入语义、区域标记协议、配置与端到端教程）；
+  - **fork 声明**（补充要求）：README 双语 / 站点首页双语 / 总览页明确「本仓库是上游 OpenFairyGUI 的 fork 分支，持续跟踪上游发布的同时维护 Y0Studio 额外新增功能」；
+  - 修正根 README 陈旧口径（Entity「仅缺失时生成」→ 区域合并语义）；
+  - 入口接线：docs 索引双语、README 导航双语、站点侧栏新增「Fork 定制」组。
+- **验证**: `pnpm docs:check` / `pnpm lint` / `pnpm test:repo` / `pnpm typecheck` / `pnpm docs:build`（fork 基路径，三页产物生成）全绿；全量测试 648 全绿；部署后站点新页与首页声明探活。
+
 ## 2026-08-13 — merge upstream-release → test-merge（v0.2.5 → v0.3.1）
 
 - **上游基线**: `8a8946a`（含 v0.2.6、v0.3.0、v0.3.1：协议类型完整覆盖、SWF 资源保留、项目值校验、发布信任边界加固、backend 路径策略、atomic save/stale lock 恢复等 44 个提交）

@@ -7,7 +7,7 @@ import {
 	resourcePublishedFileName,
 	imageFileName,
 	sourceFileCandidates,
-	resolveSourceFile,
+	resolvePackageSourceFile,
 	resourceOutputPath,
 } from './resource-paths.js';
 
@@ -46,7 +46,7 @@ async function restoreAtlasImages(
 ): Promise<void> {
 	if (!options.cropImage) return;
 	for (const atlas of pkg.listAtlases()) {
-		const sourceAtlas = await resolveSourceFile(fs, options.sourceDir, sourceFileCandidates(pkg, atlas.getFile()));
+		const sourceAtlas = await resolvePackageSourceFile(fs, options.sourceDir, pkg, sourceFileCandidates(pkg, atlas.getFile()));
 		if (!sourceAtlas) {
 			throw new Error(
 				`Atlas image not found for package "${pkg.getName()}": ${sourceFileCandidates(pkg, atlas.getFile()).join(', ')}`,
@@ -97,9 +97,10 @@ async function copyLooseResources(
 		}
 		const fileName = resourceFileName(resource);
 		if (!fileName) continue;
-		const sourcePath = await resolveSourceFile(
+		const sourcePath = await resolvePackageSourceFile(
 			fs,
 			options.sourceDir,
+			pkg,
 			sourceFileCandidates(pkg, resourcePublishedFileName(resource), fileName),
 		);
 		if (!sourcePath) {
@@ -217,7 +218,7 @@ async function buildSpriteLookup(
 ): Promise<Map<string, SpriteLookupEntry>> {
 	const sprites = new Map<string, SpriteLookupEntry>();
 	for (const atlas of pkg.listAtlases()) {
-		const sourceAtlas = await resolveSourceFile(fs, options.sourceDir, sourceFileCandidates(pkg, atlas.getFile()));
+		const sourceAtlas = await resolvePackageSourceFile(fs, options.sourceDir, pkg, sourceFileCandidates(pkg, atlas.getFile()));
 		if (!sourceAtlas) {
 			throw new Error(
 				`Atlas image not found for package "${pkg.getName()}": ${sourceFileCandidates(pkg, atlas.getFile()).join(', ')}`,

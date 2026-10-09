@@ -101,18 +101,44 @@ export async function restore(options: RestoreOptions): Promise<RestoreResult> {
 	await assertRestoreOutputDir(sourceDir, outputDir, options.fs, options.force === true);
 
 	const packageFilter = options.packages?.length ? new Set(options.packages) : null;
-	const binaryNames = (await options.fs.readdir(sourceDir))
-		.filter((name) => isPublishedBinaryFile(name))
-		.filter((name) => !packageFilter || packageFilter.has(inferPackageName(name)));
-	for (const binaryName of binaryNames) assertSafeRestoreSegment(binaryName, 'published binary file name');
-	const candidateBinaryPaths = binaryNames
-		.map((name) => options.fs.join(sourceDir, name))
-		.sort((left, right) => left.localeCompare(right));
-	const binaryPaths = (await Promise.all(
-		candidateBinaryPaths.map(async (filePath) => (await options.fs.isFile(filePath)) ? filePath : null),
-	))
-		.filter((filePath): filePath is string => !!filePath)
-		.sort((left, right) => left.localeCompare(right));
+	const entries = await options.fs.readdir(sourceDir);
+	const flatFiles: Array<{ filePath: string; name: string }> = [];
+	const directories: Array<{ dirPath: string; name: string }> = [];
+	for (const name of entries) {
+		const entryPath = options.fs.join(sourceDir, name);
+		if (await options.fs.isFile(entryPath)) flatFiles.push({ filePath: entryPath, name });
+		else directories.push({ dirPath: entryPath, name });
+	}
+	const binaryPaths: string[] = [];
+	const seenPackages = new Set<string>();
+	for (const { filePath, name } of flatFiles) {
+		if (!isPublishedBinaryFile(name)) continue;
+		assertSafeRestoreSegment(name, 'published binary file name');
+		const packageName = inferPackageName(name);
+		if (packageFilter && !packageFilter.has(packageName)) continue;
+		seenPackages.add(packageName);
+		binaryPaths.push(filePath);
+	}
+	for (const { dirPath, name } of directories) {
+		// Unity (bytes) 产物按 {PkgName}/ 子文件夹发布（fork 约定）：再扫描一层。
+		assertSafeRestoreSegment(name, 'published package directory name');
+		let nestedNames: string[];
+		try {
+			nestedNames = await options.fs.readdir(dirPath);
+		} catch {
+			continue;
+		}
+		for (const nestedName of nestedNames) {
+			if (!isPublishedBinaryFile(nestedName)) continue;
+			assertSafeRestoreSegment(nestedName, 'published binary file name');
+			const packageName = inferPackageName(nestedName);
+			if (packageFilter && !packageFilter.has(packageName)) continue;
+			if (seenPackages.has(packageName)) continue; // 扁平优先
+			const nestedPath = options.fs.join(dirPath, nestedName);
+			if (await options.fs.isFile(nestedPath)) binaryPaths.push(nestedPath);
+		}
+	}
+	binaryPaths.sort((left, right) => left.localeCompare(right));
 
 	if (binaryPaths.length === 0) {
 		throw new Error(`No FairyGUI published binary files found in ${sourceDir}.`);

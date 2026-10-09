@@ -18,6 +18,7 @@ import {
 	basename,
 	commitRestoreOutput,
 	createRestoreStagingDir,
+	isPathWithin,
 	normalizeRestoreOutputDir,
 	resolveOutputProjectPath,
 	trimTrailingSlashes,
@@ -101,11 +102,16 @@ export async function restore(options: RestoreOptions): Promise<RestoreResult> {
 	await assertRestoreOutputDir(sourceDir, outputDir, options.fs, options.force === true);
 
 	const packageFilter = options.packages?.length ? new Set(options.packages) : null;
+	const resolvedSourceRoot = await Promise.resolve(options.fs.resolvePath(sourceDir));
 	const entries = await options.fs.readdir(sourceDir);
 	const flatFiles: Array<{ filePath: string; name: string }> = [];
 	const directories: Array<{ dirPath: string; name: string }> = [];
 	for (const name of entries) {
 		const entryPath = options.fs.join(sourceDir, name);
+		const resolvedEntryPath = await Promise.resolve(options.fs.resolvePath(entryPath));
+		if (!isPathWithin(resolvedSourceRoot, resolvedEntryPath)) {
+			throw new Error(`restore: Published artifact resolves outside the input directory: ${name}`);
+		}
 		if (await options.fs.isFile(entryPath)) flatFiles.push({ filePath: entryPath, name });
 		else directories.push({ dirPath: entryPath, name });
 	}
@@ -135,6 +141,10 @@ export async function restore(options: RestoreOptions): Promise<RestoreResult> {
 			if (packageFilter && !packageFilter.has(packageName)) continue;
 			if (seenPackages.has(packageName)) continue; // 扁平优先
 			const nestedPath = options.fs.join(dirPath, nestedName);
+			const resolvedNestedPath = await Promise.resolve(options.fs.resolvePath(nestedPath));
+			if (!isPathWithin(resolvedSourceRoot, resolvedNestedPath)) {
+				throw new Error(`restore: Published artifact resolves outside the input directory: ${name}/${nestedName}`);
+			}
 			if (await options.fs.isFile(nestedPath)) binaryPaths.push(nestedPath);
 		}
 	}

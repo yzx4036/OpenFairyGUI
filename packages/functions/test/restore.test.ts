@@ -689,6 +689,43 @@ test('restore published project: source files resolved outside the input are rej
 	}
 });
 
+test('restore published project: package directory resolved outside the input is rejected before reading', async (t) => {
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-restore-dir-escape-'));
+	const releaseDir = path.join(tmpDir, 'release');
+	const escapeDir = path.join(releaseDir, 'DirEscapePkg');
+	const outsideDir = path.join(tmpDir, 'outside');
+	const outputDir = path.join(tmpDir, 'Restored');
+
+	try {
+		const doc = new Document();
+		const pkg = doc.createPackage('DirEscapePkg');
+		pkg.setId('escape01').setPublishName('DirEscapePkg');
+
+		await fs.mkdir(escapeDir, { recursive: true });
+		await fs.mkdir(outsideDir, { recursive: true });
+		await io.writeBinary(doc, path.join(escapeDir, 'DirEscapePkg_fui.bytes'));
+
+		const restoreFs = createRestoreFs();
+		const resolvePath = restoreFs.resolvePath.bind(restoreFs);
+		restoreFs.resolvePath = async (filePath) => path.resolve(filePath) === path.resolve(escapeDir)
+			? outsideDir
+			: resolvePath(filePath);
+
+		await t.throwsAsync(
+			() => restore({
+				inputDir: releaseDir,
+				output: outputDir,
+				fs: restoreFs,
+				force: true,
+			}),
+			{ message: /resolves outside the input directory/ },
+		);
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
 test('restore published project: failed asset reconstruction keeps the previous output intact', async (t) => {
 	const io = new NodeIO();
 	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-restore-stage-'));

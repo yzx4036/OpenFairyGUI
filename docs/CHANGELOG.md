@@ -91,6 +91,12 @@
 - **测试同步（4 个上游新测试适配本地约定/环境）**: `republishing…` 与 `publish contexts isolate…` 的子文件夹断言、`plugins › publishNode…` 的 readdir 顶层视图、`cli inspect --json` 的 node 弃用警告环境适配（`--no-deprecation`）。
 - **验证**: `pnpm run build` ✅（`NODE_OPTIONS=--max-old-space-size=16384`）；`pnpm run lint` ✅（387 files）；`pnpm run typecheck` ✅；`pnpm run test` 失败集与合并前基线完全一致（11 项已文档化的 bytes 子文件夹断言债，非本次 merge 引入）；et-fui-codegen 14/14 ✅。
 
+## 2026-10-09 — fork 发布 `y0-v0.2.0`
+
+- **tag**: `y0-v0.2.0`（annotated，指向发布时 main HEAD）
+- **内容快照**: 上游 v0.6.3 基线（自 v0.3.1 起同步 v0.4.0~v0.6.3，85 个上游提交）+ 全部 Y0Studio 定制：et-fui-codegen 插件（含生成区 marker 保护）、CLI `--plugin`、bytes 按包子文件夹输出、`PublishSettings.pluginsDir`、Top 层 opaque 点击拦截校验告警（`top_view_opaque_blocks_touches`）、`@openfairygui/codegen` 包。
+- **验证**: `pnpm run build` ✅ / `pnpm run lint` ✅（387 files）/ `pnpm run typecheck` ✅ / `pnpm run test` 失败集与合并前基线完全一致（11 项已文档化的 bytes 子文件夹断言债）/ et-fui-codegen 14/14 ✅。
+
 ## 2026-08-13 — merge upstream-release → test-merge（v0.2.5 → v0.3.1）
 
 - **上游基线**: `8a8946a`（含 v0.2.6、v0.3.0、v0.3.1：协议类型完整覆盖、SWF 资源保留、项目值校验、发布信任边界加固、backend 路径策略、atomic save/stale lock 恢复等 44 个提交）

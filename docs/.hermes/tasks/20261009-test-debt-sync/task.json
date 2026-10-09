@@ -1,0 +1,8 @@
+{
+  "task_id": "20261009-test-debt-sync",
+  "project": "OpenFairyGUI / packages/functions",
+  "type": "software",
+  "actor": "opencode",
+  "max_attempts": 3,
+  "created": "2026-10-09T15:45:00"
+}

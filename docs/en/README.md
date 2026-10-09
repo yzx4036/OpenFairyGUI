@@ -2,10 +2,20 @@
 
 This directory contains the English documentation used by the static website. It describes only the current implementation and does not preserve obsolete compatibility layers, temporary migrations, or unimplemented plans.
 
+[中文文档](../README.md)
+
 ## Documentation index
 
 | Document | Description |
 |---|---|
+| [Repository Development and Verification](./guide/development.md) | Reproducible setup, references, task routing, verification scope and PR gates. |
+| [Development Task Recipes](./guide/task-recipes.md) | XML fields, UAM operations, Backend/MCP integration, publish diagnosis and protocol evidence routes. |
+| [Runnable Examples and Consumer Verification](./guide/examples.md) | Reward panel states, layout animation, and card generation, SDK/MCP edit verification, isolated tarballs, real browser storage, and publish/limited recovery. |
+| [Contract Sources and Operation Discovery](./guide/contracts.md) | Core/Backend-derived operations, MCP input/output schemas, binary transport and drift checks. |
+| [Diagnostics and Recovery](./guide/diagnostics.md) | Diagnostic ownership, per-code guides and read-only recovery starting points; no automatic repair. |
+| [Installed Documentation and Product Diagnosis](./guide/installed-docs.md) | CLI/MCP shared offline corpus, thin skill and read-only product doctor. |
+| [Real Agent Task Evaluations](./guide/agent-evaluations.md) | Ten real-tarball tasks, deterministic oracles, manual model observations and failure reproduction. |
+| [Project Validation](../project-validation.md) | Shared project validation reports and API/CLI/Backend/MCP behavior. |
 | [Changelog](https://github.com/OpenFairyGUI/OpenFairyGUI/blob/main/CHANGELOG.md) | Public features, fixes, breaking changes, and maintenance work by release. |
 | [Architecture Overview](./architecture-overview.md) | Package responsibilities, UAM and backend boundaries, host adapters, and primary data flows. |
 | [Editor Publish Settings](./editor-publish-settings.md) | Actual editor setting files, properties, defaults, output resolution, and current publish behavior. |
@@ -14,7 +24,7 @@ This directory contains the English documentation used by the static website. It
 | [Project XML Attribute Protocol](./project-xml-attribute-reference.md) | Canonical Project XML attributes, aliases, and node-level semantics. |
 | [Project XML DisplayList Tag Alignment](./project-xml-displaylist-variants.md) | Alignment among raw XML tags, protocol variants, and editor `DisplayListItem.type` values. |
 | [FairyGUI Binary Package Format](./fairygui-binary-package-format.md) | V7 package blocks, component decoding, child records, and runtime-phase mapping. |
-| [Getting Started](./guide/getting-started.md) | Install the SDK and read your first FairyGUI project. |
+| [Getting Started](./guide/getting-started.md) | Local MCP setup, installed-version checks, a first verifiable edit, and CLI / SDK entrypoints. |
 | [Packages and Tools](./guide/packages.md) | Choose the right package and runtime entrypoint. |
 | [Website Home](./index.md) | Entry points for guides, translated references, and the API. |
 
@@ -22,7 +32,7 @@ This directory contains the English documentation used by the static website. It
 
 | Item | Policy |
 |---|---|
-| Audience | Repository maintainers, implementers, protocol contributors, and publishing-tool authors. |
+| Audience | Agent and tool users, editor-host developers, repository maintainers, and protocol contributors. |
 | Source of truth | Documentation follows the current repository implementation; synchronization requirements are defined in `AGENTS.md`. |
 | Root READMEs | `README.md` and `README_EN.md` provide navigation rather than protocol specifications. |
 | Website build | Use `pnpm docs:dev` for local development. `pnpm docs:build` generates the public API reference and static site. |

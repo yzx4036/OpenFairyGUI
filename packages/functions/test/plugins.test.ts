@@ -5,6 +5,7 @@ import path from 'node:path';
 import { Document } from '@openfairygui/core';
 import type { RootProjectSettings } from '../src/index.js';
 import { publishNode } from '../src/node.js';
+import sharp from 'sharp';
 
 function createCodegenDocument(projectDir: string): Document {
 	const doc = new Document();
@@ -35,13 +36,48 @@ function createCodegenDocument(projectDir: string): Document {
 	return doc;
 }
 
+test('publishNode returns actual final writes across direct, paged, alpha and generated-code outputs', async (t) => {
+	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'ofgui-publish-manifest-'));
+	try {
+		for (const [index, [count, alpha]] of [[1, false], [2, false], [2, true]].entries()) {
+			const projectDir = path.join(root, String(index));
+			const doc = createCodegenDocument(projectDir);
+			const pkg = doc.getRoot().listPackages()[0]!;
+			const source = path.join(projectDir, 'assets', pkg.getName());
+			await fs.mkdir(source, { recursive: true });
+			for (let image = 0; image < Number(count); image++) {
+				const name = `image${image}.png`;
+				pkg.addResource(doc.createImageResource(name).setId(`img${image}`).setFileName(name).setPath('/').setWidth(2).setHeight(2).setExported(true));
+				await sharp({ create: { width: 2, height: 2, channels: 4, background: '#ff000080' } }).png().toFile(path.join(source, name));
+			}
+			const output = path.join(projectDir, 'release');
+			await fs.mkdir(output); await fs.writeFile(path.join(output, 'untouched.txt'), 'keep');
+			const result = await publishNode({ document: doc, output, plugins: [], atlas: { extractAlpha: Boolean(alpha), trimImage: false } });
+			t.false(result.files.some((file) => file.path.includes('.publish-') || file.path.endsWith('untouched.txt')));
+			t.true(result.files.some((file) => file.path.endsWith('_fui.bytes')));
+			t.true(result.files.some((file) => file.path.endsWith('.cs')));
+			t.is(result.files.filter((file) => file.path.endsWith('.png')).length, alpha ? 2 : 1);
+			for (const file of result.files) t.is((await fs.stat(file.path)).size, file.size);
+			const expectedTopLevel = [...new Set(result.files
+				.filter((file) => file.path.startsWith(`${output}${path.sep}`))
+				.map((file) => path.relative(output, file.path).split(path.sep)[0]!))].sort();
+			t.deepEqual((await fs.readdir(output)).filter((name) => name !== 'untouched.txt').sort(), expectedTopLevel);
+		}
+		const doc = createCodegenDocument(root);
+		doc.getRoot().listPackages()[0]!.setPublishPath('configured-release');
+		const result = await publishNode({ document: doc, plugins: [], codeGeneration: false });
+		t.deepEqual(result.files.map((file) => file.path), [path.join(root, 'configured-release', 'DemoPkg', 'DemoPkg_fui.bytes')]);
+	} finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 async function writePlugin(
 	projectDir: string,
 	pluginName: string,
 	source: string,
 	manifest: Record<string, unknown> = {},
+	pluginsSubDir = 'plugins',
 ): Promise<void> {
-	const pluginDir = path.join(projectDir, 'plugins', pluginName);
+	const pluginDir = path.join(projectDir, pluginsSubDir, pluginName);
 	await fs.mkdir(pluginDir, { recursive: true });
 	await fs.writeFile(
 		path.join(pluginDir, 'package.json'),
@@ -390,6 +426,77 @@ test('publishNode: failureMode warn explicitly preserves fallback behavior', asy
 		});
 
 		t.truthy(await fs.stat(path.join(tmpDir, 'generated', 'DemoPkg', 'UI_Main.cs')));
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('publishNode: discovers plugins from legacy plugins/ by default (regression)', async (t) => {
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-default-plugins-dir-'));
+
+	try {
+		const doc = createCodegenDocument(tmpDir);
+		// Manifest without explicit pluginsDir → legacy `plugins/` is scanned.
+		await writePlugin(
+			tmpDir,
+			'legacy-default-plugin',
+			`
+export default {
+	async genCode(doc, settings, options) {
+		await options.fs.writeFileRaw(options.fs.join(doc.getProjectDir(), 'legacy-default.txt'), new TextEncoder().encode('legacy-default-found'));
+	}
+};
+`,
+		);
+
+		await publishNode({
+			document: doc,
+			output: path.join(tmpDir, 'release'),
+		});
+
+		t.is(await fs.readFile(path.join(tmpDir, 'legacy-default.txt'), 'utf-8'), 'legacy-default-found');
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('publishNode: honors PublishSettings.pluginsDir for plugin discovery (OpenFairyGUI#2)', async (t) => {
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-cli-plugins-dir-'));
+
+	try {
+		// Plugin lives in cli-plugins/, NOT plugins/ (which FairyGUI editor scans as Lua).
+		const doc = createCodegenDocument(tmpDir);
+		doc.getRoot().setSettings({
+			publish: {
+				codeGeneration: {
+					allowGenCode: true,
+					codePath: 'generated',
+					codeType: '',
+				},
+				pluginsDir: 'cli-plugins',
+			},
+		} as RootProjectSettings);
+
+		await writePlugin(
+			tmpDir,
+			'cli-plugins-plugin',
+			`
+export default {
+	async genCode(doc, settings, options) {
+		await options.fs.writeFileRaw(options.fs.join(doc.getProjectDir(), 'cli-plugins-found.txt'), new TextEncoder().encode('cli-plugins-found'));
+	}
+};
+`,
+			{},
+			'cli-plugins',
+		);
+
+		await publishNode({
+			document: doc,
+			output: path.join(tmpDir, 'release'),
+		});
+
+		t.is(await fs.readFile(path.join(tmpDir, 'cli-plugins-found.txt'), 'utf-8'), 'cli-plugins-found');
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}

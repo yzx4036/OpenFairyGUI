@@ -58,6 +58,8 @@
 | `atlasAllowRotation` | 是否允许旋转 |
 | `atlasTrimImage` | 是否裁边 |
 
+说明：`pluginsDir`（可选字符串）不在编辑器 `GlobalPublishSettings` 中，是本 fork 增强：在 `settings/Publish.json`（工程设置的 `publish` 节点）中声明 Node publish 扫描 Node 插件的子目录（相对工程根），默认扫描 `plugins`。当同一工程还会被 FairyGUI 桌面编辑器打开时，应避开 `plugins/`（例如设为 `cli-plugins`）——编辑器会把 `plugins/` 下每个子目录当作 Lua 插件加载，非 Lua 的 TypeScript/Node 插件目录会导致编辑器加载失败（OpenFairyGUI#2）。未设置时与默认行为一致。
+
 ### `codeGeneration`
 
 `Publish.json` 中的代码生成子对象包含以下真实属性：
@@ -148,6 +150,24 @@ FairyGUI 工程 XML 中由桌面编辑器按有符号 32 位整数读取的几�
 
 `pivot`、`scale`、`skew`、`gearXY` 的百分比和 `gearSize` 的缩放值继续保留小数。
 
+组件根及支持 pivot 的显示标签在 `anchor="true"` 时保留 `pivot="0,0"`，零坐标不取消锚点语义。`.fairy` 的工程类型完整写回 `Unity` 至 `Vision` 的 13 种正式类型；未知类型在写入前拒绝。
+
+UAM 的 XY Gear 状态与默认值使用 `x/y` 和可选的 `px/py`；启用 `positionsInPercent` 时，显式状态值必须提供成对的有限 `px/py`，比例 `0.5` 表示 50%。默认值 `null` 表示未提供默认覆盖，保存时保持省略。每个显示节点的同一种 Gear 只允许绑定一次；需要更换控制器时移除后重新添加，Display 和 Display2 可共存。
+
+Size、Look、Color、Animation 与 FontSize Gear 同样以 `defaultValue: null` 表示未提供默认覆盖，不以固定状态替代。XML 的 `delay` 保留为 `tweenDelay`；关闭补间也保留非默认的 ease、duration 和 delay。组件实例的 `controller` 属性通过正式 UAM `controllerOverrides` 保留，含其控制器及页面选择。
+
+Text/Icon Gear 按页保留未覆盖值、空字符串和普通 `-` 文本，默认值也区分未覆盖与显式清空。工程 XML 的 `values` 以 `|` 分隔页面；每页文本含 `|` 尚无已验证的官方无损表示，ProjectWriter 在任何写入前拒绝该类输出。默认值中的 `|` 不受此分隔限制；UAM、Document 与二进制保留完整字符串。
+
+发布资源闭包包含组件根的 `showSound` / `hideSound`：同包未导出音效会随引用组件发布，跨包音效形成包依赖。
+
+组件实例的 `fileName` 是随工程往返保留的编辑器文件提示，目标引用仍由 `src` 和可选的 `pkg` 标识。未提供提示时保持省略。
+
+组件实例的 `pageController` 引用父组件中驱动该实例分页滚动的控制器，工程往返保持该名称；未配置时省略。UAM 校验拒绝非字符串值和不存在的父控制器。按钮、标签、下拉框、进度条、滑块和滚动条等组件派生实例也保留该字段，支持二进制解码后的 UAM 往返及工程写回。
+
+`gearColor` 的状态及默认值在未配置描边颜色时写为单个颜色；显式空的第二字段同样规范化为单个颜色。已配置的描边颜色和 `-` 未覆盖状态保持原有含义。
+
+`gearAni` 写回时省略末尾为空的动画名和皮肤名，但保留帧、播放状态及非末尾空字段。`gearSize` 缺省的 scaleX/scaleY 均按 1 处理；写出需要显式缩放字段时补齐，不需要时省略单位缩放。以上规则同时适用于状态和默认值，使原始工程与 UAM 往返的写出一致；`-` 未覆盖状态和缺省默认值保持不变。
+
 ## 工程资源树元数据
 
 `package.xml` 与 `package_branch.xml` 的 component/asset 资源节点使用 `exported="true"` 与 `favorite="true"` 记录导出和收藏状态；未导出、未收藏时省略对应属性。SWF 使用正式的 `SwfResource` 模型读写 `<swf>` 节点，并通过 UAM `swf` 资源保留源文件、导出状态与收藏状态。UAM 通过 `resource.exported`、`resource.favorite` 承载这些字段，公开事务分别使用幂等的 `setResourceExported`、`setResourceFavorite` 设置目标布尔值。
@@ -157,6 +177,8 @@ FairyGUI 工程 XML 中由桌面编辑器按有符号 32 位整数读取的几�
 公开事务 `addBranch`、`renameBranch`、`removeBranch` 维护按名称排序的工程分支注册表。重命名会原子更新资源、资源文件夹和包内分支表，但保持每个包已有槽位位置不变；删除只允许空且没有变体 ID 映射的分支。分支名必须是安全、非保留的单个路径段。编辑器当前激活分支属于本地界面状态，不在这些工程事务中修改。
 
 ProjectWriter 会为每个工程分支保留 `assets_<branch>/`，并为包内空分支槽位写出空的 `package_branch.xml`，因此空分支和包内分支子集都能在 ProjectReader reload 后恢复。重命名或删除成功保存后，仅以非递归目录删除清理已移除的受控分支目录。
+
+旧文件与目录清理使用存储适配器提供的现有路径身份；大小写别名解析到当前输出时不删除，大小写敏感存储仍区分不同文件。包和分支的全部图片排序提示在首次文件写入前验证，缺失、跨包、跨分支或循环锚点均拒绝写入。
 
 资源文件夹由 `package.folders` 正式承载 `branch / path / favorite / atlas`。文件夹路径使用以 `/` 开头和结尾的规范形式，根目录是隐式节点；实际 `assets[/_<branch>]/<包名>/` 目录是存在性的事实来源，`<folder>` 节点只写入需要持久化的收藏或图集元数据。`setResourceFolderFavorite` 可更新既有主分支或资源分支文件夹的收藏状态，且单个操作只修改 selector 指定的文件夹；需要匹配编辑器的后代收藏行为时，调用方应在同一事务中显式提交后代文件夹与资源收藏操作。公开事务 `addResourceFolder`、`renameResourceFolder`、`moveResourceFolder`、`removeResourceFolder` 只操作空文件夹；父目录必须存在，根目录、路径冲突和非空操作会在提交前拒绝。浏览器存储适配器须提供非递归 `rmdir`，保存成功后才清理被移除的空目录。
 
@@ -190,6 +212,8 @@ ProjectWriter 会为每个工程分支保留 `assets_<branch>/`，并为包内�
 
 选中的相对路径以工程根目录为基准；若以上都未配置，发布不会隐式选择输出目录。
 
+工程及包级 `path` / `branchPath` 先以发布名称替换 `{publish_file_name}`（不含扩展名），再按 `CustomProperties.json` 的属性顺序替换 `{变量名}`，最后解析相对路径。未知变量保持原样；显式 `output` 作为调用方路径直接使用。工程及包级 `codePath` 同样展开自定义变量。
+
 ### Unity（bytes）输出路径 — 按包分子文件夹
 
 Unity 项目固定使用 `bytes` 扩展名时，解析出的输出目录会自动追加 `/{PublishName}/` 子文件夹。最终产物布局为：
@@ -214,6 +238,10 @@ Unity 项目固定使用 `bytes` 扩展名时，解析出的输出目录会自�
 
 ## 当前发布完整性要求
 
+位图字体在资源筛选前读取所属分支的 `.fnt`，由纹理及字形图片建立发布依赖闭包，包含未显式导出的图片；合并分支时字形引用同步映射到发布 ID。`assets_<branch>` 字体不读取主分支同名 `.fnt`。TTF/TTC/OTF 是引擎字体：文本写入字体资源名称，不生成空位图 Font 项，也不因该字体 URL 增加包依赖。
+
+同一 Document 重复发布时，图集成功生成后替换旧 Atlas/Sprite，生成失败保留之前完整的图集。发布集合由资源导出状态和依赖重新计算，之前生成的 Sprite 不构成新的发布依据。
+
 这些要求是 OpenFairyGUI 当前发布执行时的能力边界，不是新增的编辑器设置字段：
 
 | 条件 | 当前行为 |
@@ -227,6 +255,8 @@ Unity 项目固定使用 `bytes` 扩展名时，解析出的输出目录会自�
 未请求任何输出目录时，低层 `publish()` 可以只计算 layout；这不是文件发布，也不会写出二进制或资源文件。标准 Node 工作流应使用 `publishNode()`。
 
 标准 Node adapter 在显式传入 `output` 时，会先把该目录复制到同级 staging 目录，完整发布成功后再以目录切换提交；内置 runtime 输出或 `onPublishEnd` 失败时，原输出目录保持不变。按工程/包设置解析出的多个输出目录、自定义低层文件系统、输出目录外的 codegen，以及插件通过 `basePath` 或其他路径产生的副作用不在这项目录级保证内，应由宿主或插件提供自己的 staging/回滚策略。
+
+`publishNode()` 成功返回 `{ files: [{ path, size }] }`，记录内置文件系统与图集 writer 实际写入的文件，路径为提交后的绝对路径、size 为字节数；测量在暂存目录提交前完成。清单包含经 publish 文件系统写入的代码，不含旧目录未改动文件、删除项或插件绕开该文件系统的任意 I/O。失败仍抛错，不返回成功清单。CLI `publish --json` 直接包装这一结果，不自行推测输出文件名；机器输出与退出码见[可运行示例](./guide/examples.md)。文件命名与二进制协议未因此改变。
 
 ## 代码生成的当前实现范围
 
@@ -243,6 +273,8 @@ OpenFairyGUI 当前已经把“代码生成”接入现有 `publish` 流程，�
 | 其他项目类型 | 当前未实现，跳过生成 |
 
 当前正式落地的代码生成口径如下：
+
+包名、组件名和成员名中的汉字转为逐字拼音，ASCII 名称保持原有大小写规则；多音字采用词典默认读音。组件按 ID 排序后分配名称；同一包内重名或仅大小写不同的类名依次加 `_2`、`_3`，并避开 Binder 名称。成员名冲突也分配唯一后缀。引用类型、文件名和 Binder 使用同一组最终类名。
 
 | Lane | 输出项 | 当前行为 |
 |---|---|---|
@@ -388,6 +420,12 @@ Unity 与 Cocos Creator 运行时不解压二进制描述文件，因此这两�
 | `compressPNG` / `jpegQuality` | 仅项目不支持 atlas 时写出 |
 
 ## 工程写回联动边界
+
+组件 XML 往返保留受支持的属性值和有序子节点，不承诺保留源文本的属性排列。属性排列不承载语义；Gear、relation、扩展覆盖及列表条目等子节点仍按各自协议顺序处理。
+
+恢复工程中的图片可省略 `package.xml` 的 `width`、`height`，以免把发布资源推导尺寸当作原工程显式声明；图片重建仍保留可用尺寸。该省略规则不改变普通工程中已声明尺寸的写回。
+
+恢复生成的字体纹理和字形图片在相同包与分支中跟随对应字体，纹理先于字形，同类图片按资源 ID 顺序排列；这不改变资源的 ID、引用或图片内容。
 
 工程根 `.fairy` 文件的 `projectDescription.id / type / version` 统一通过 XML 属性渲染器写出；引号、
 尖括号、换行和 `&` 等字符会转义，并在再次读取时还原为原属性值，不会形成额外 XML 属性。

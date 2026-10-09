@@ -1,6 +1,7 @@
 export {
 	publishNode,
 	type PublishNodeOptions,
+	type PublishNodeResult,
 } from './adapters/node/publish.js';
 export { loadPlugins } from './adapters/node/plugins.js';
 export {

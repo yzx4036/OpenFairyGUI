@@ -9,26 +9,28 @@ import {
 } from '../contracts.js';
 import { createRuntimePathPolicy } from '../path-policy.js';
 import { createArtifactCapabilities } from '../services/artifact-service.js';
-import type { BackendArtifactBridgeCapability, BackendCapabilities } from './contracts.js';
+import type { BackendArtifactBridgeCapability, BackendCapabilities, BackendMethodName } from './contracts.js';
+import { BACKEND_ENTITY_QUERY_LIMITS, BACKEND_SESSION_READ_LIMITS, BACKEND_TRANSACTION_PREVIEW_LIMITS } from './contracts.js';
 
-const BACKEND_METHODS = [
+export const BACKEND_METHODS = [
 	'getCapabilities',
 	'openSession',
 	'openProjectSession',
 	'getSession',
 	'getProjectOutline',
+	'queryEntity',
+	'readSessionState',
+	'readResourceBytes',
 	'validateSession',
+	'preflightTransaction',
 	'applyTransaction',
 	'saveSession',
 	'materializeSession',
 	'closeSession',
 	'getEvents',
-	'getJob',
-	'listJobs',
-	'cancelJob',
 	'getCacheSnapshot',
 	'refreshCache',
-] as const;
+] as const satisfies readonly BackendMethodName[];
 
 const ARTIFACT_BRIDGE_CAPABILITY = {
 	available: false,
@@ -50,9 +52,13 @@ export function createCapabilities(atomicSave = false): BackendCapabilities {
 			capabilitySnapshot: true,
 			sessionSnapshot: true,
 			projectOutline: true,
+			entityQuery: { kinds: ['project', 'package', 'resource', 'component', 'displayNode', 'controller', 'transition'], projection: 'properties', sourceBytes: false, limits: BACKEND_ENTITY_QUERY_LIMITS },
+			sessionState: { sourceBytes: false, limits: BACKEND_SESSION_READ_LIMITS.model },
+			resourceBytes: { expectedRevisionRequired: true, hydration: false, maxBytes: BACKEND_SESSION_READ_LIMITS.resourceBytes },
 			projectValidation: true,
 		},
 		authoring: {
+			preflightTransaction: { mode: 'execute-and-discard', reservesRevision: false, impact: 'model-diff', limits: BACKEND_TRANSACTION_PREVIEW_LIMITS },
 			applyTransaction: true,
 			saveSession: true,
 			resourceKinds: [...UAM_SUPPORTED_MATERIALIZATION_SCOPE.resourceKinds],
@@ -95,6 +101,8 @@ export function createCapabilities(atomicSave = false): BackendCapabilities {
 			diagnostics: {
 				stableCodes: true,
 				errorDiagnosticMirror: true,
+				recoveryGuides: 'all-formal-codes',
+				automaticRepair: false,
 			},
 		},
 		compatibilityPolicy: BACKEND_COMPATIBILITY_POLICY,
@@ -111,17 +119,10 @@ export function createCapabilities(atomicSave = false): BackendCapabilities {
 				retentionLimit: 1000,
 				sequenceScope: 'runtime',
 			},
-			jobs: {
-				inMemory: true,
-				cooperativeCancel: true,
-				persistent: false,
-				supportedKinds: ['cache.refresh'],
-				artifactJobs: false,
-				completedRetentionLimit: 100,
-			},
 			cache: {
 				derivedReadOnly: true,
-				keyedBy: 'canonicalPathKey',
+				keyedBy: 'sessionId',
+				refreshMode: 'synchronous',
 				sourceOfTruth: false,
 				refreshMethod: 'refreshCache',
 			},

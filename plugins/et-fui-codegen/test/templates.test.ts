@@ -67,7 +67,10 @@ test.serial('renders a panel entity and system', async (t) => {
 	const system = await renderPanelSystem(component, 'ET.Client');
 
 	t.true(entity.includes('class LoginPanel : Entity, IAwake'));
-	t.true(entity.includes('public FUI_LoginPanel View;'));
+	t.true(entity.includes('GENERATED:et-fui-codegen:LoginPanel:attributes:BEGIN'), 'entity attributes region marker');
+	t.true(entity.includes('GENERATED:et-fui-codegen:LoginPanel:view:BEGIN'), 'entity view region marker');
+	t.true(entity.includes('FUI_LoginPanel View'), 'binding-class view property');
+	t.true(entity.includes('GetParent<FUIEntity>()?.GComponent'), 'lazy view property');
 	t.true(entity.includes('[ComponentOf(typeof(FUIEntity))]'));
 	t.true(system.includes('class LoginPanelSystem'));
 	t.true(system.includes('void OnShow'));

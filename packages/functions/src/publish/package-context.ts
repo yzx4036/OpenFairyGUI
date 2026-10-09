@@ -13,22 +13,17 @@ import {
 } from '@openfairygui/core';
 import type { AtlasRasterBackend } from './contracts.js';
 import { collectPackageResourceReferences } from './resource-references.js';
-import type { PackagePublishArtifactsExtras } from '../shared-types.js';
 
 interface ImageResourceExtras extends Record<string, unknown> {
 	_fileName?: string;
-}
-
-interface PublishFileExtras extends Record<string, unknown> {
-	_publishedFile?: string;
-	_publishedId?: string;
 }
 
 interface BranchAwarePublishedResource {
 	getBranch?(): string;
 }
 
-interface PackagePublishContext {
+export interface PackagePublishContext {
+	publishedFiles: Map<string, string>;
 	referencedIds: Set<string>;
 	publishedResourceIds: Set<string>;
 	exportedResourceIds: Set<string>;
@@ -64,6 +59,10 @@ export function isMiscResource(resource: ReturnType<Package['listResources']>[nu
 
 export function isFontResource(resource: ReturnType<Package['listResources']>[number]): resource is FontResource {
 	return resource.propertyType === 'FontResource';
+}
+
+export function getFontDependencyImageIds(font: FontResource): string[] {
+	return [font.getTextureId(), ...font.listGlyphs().map((glyph) => glyph.getImg())].filter(Boolean);
 }
 
 export function isSoundResource(resource: ReturnType<Package['listResources']>[number]): resource is SoundResource {
@@ -114,6 +113,11 @@ export function resolveImageFileName(resource: ImageResource): string {
 	return resource.getFileName() || extras._fileName || resource.getName();
 }
 
+export function resolveFontPath(resource: FontResource, pkg: Package, basePath: string): string {
+	const fileName = resource.getFileName() || (/\.fnt$/i.test(resource.getName()) ? resource.getName() : `${resource.getName()}.fnt`);
+	return `${resolvePackageAssetsBasePath(basePath, resource)}/${pkg.getName()}${resource.getPath() || '/'}${fileName}`;
+}
+
 export function resolveSoundPath(resource: SoundResource, pkg: Package, basePath: string): string {
 	const resourcePath = resource.getPath() ?? '/';
 	const packageBasePath = resolvePackageAssetsBasePath(basePath, resource);
@@ -138,16 +142,16 @@ export function extname(fileName: string): string {
 	return normalized.slice(lastDot);
 }
 
-function resolvePublishedMiscFileName(resource: MiscResource, projectType: number): string {
-	const fileName = `${getPublishedId(resource)}${extname(resource.getFile())}`;
+function resolvePublishedMiscFileName(resource: MiscResource, projectType: number, effectiveResourceIds: ReadonlyMap<string, string>): string {
+	const fileName = `${getPublishedId(resource, effectiveResourceIds)}${extname(resource.getFile())}`;
 	if (projectType === UNITY_PROJECT_TYPE && fileName.toLowerCase().endsWith('.atlas')) {
 		return `${fileName}.txt`;
 	}
 	return fileName;
 }
 
-function resolvePublishedSwfFileName(resource: SwfResource): string {
-	return `${getPublishedId(resource)}${extname(resource.getFile()) || '.swf'}`;
+function resolvePublishedSwfFileName(resource: SwfResource, effectiveResourceIds: ReadonlyMap<string, string>): string {
+	return `${getPublishedId(resource, effectiveResourceIds)}${extname(resource.getFile()) || '.swf'}`;
 }
 
 function resolvePublishedSkeletonFileName(resource: SpineResource | DragonBonesResource, projectType: number): string {
@@ -161,41 +165,8 @@ function resolvePublishedSkeletonFileName(resource: SpineResource | DragonBonesR
 	return resource.getFile();
 }
 
-function setPublishedFileExtra(
-	resource: { getExtras(): Record<string, unknown> | undefined; setExtras(value: Record<string, unknown>): unknown },
-	fileName: string,
-): void {
-	const extras = (resource.getExtras() as PublishFileExtras | undefined) ?? {};
-	resource.setExtras({
-		...extras,
-		_publishedFile: fileName,
-	});
-}
-
-function setPublishedIdExtra(
-	resource: {
-		getId(): string;
-		getExtras(): Record<string, unknown> | undefined;
-		setExtras(value: Record<string, unknown>): unknown;
-	},
-	effectiveId: string | null,
-): void {
-	const extras = (resource.getExtras() as PublishFileExtras | undefined) ?? {};
-	if (!effectiveId || effectiveId === resource.getId()) {
-		if (!('_publishedId' in extras)) return;
-		const { _publishedId: _ignored, ...rest } = extras;
-		resource.setExtras(rest);
-		return;
-	}
-	resource.setExtras({
-		...extras,
-		_publishedId: effectiveId,
-	});
-}
-
-export function getPublishedId(resource: { getId(): string; getExtras(): Record<string, unknown> | undefined }): string {
-	const extras = (resource.getExtras() as PublishFileExtras | undefined) ?? {};
-	return extras._publishedId ?? resource.getId();
+export function getPublishedId(resource: { getId(): string }, effectiveResourceIds: ReadonlyMap<string, string>): string {
+	return effectiveResourceIds.get(resource.getId()) ?? resource.getId();
 }
 
 function getBranchName(resource: BranchAwarePublishedResource | undefined): string {
@@ -293,7 +264,7 @@ function collectHighResolutionItemIds(
 	return result;
 }
 
-function collectPackagePublishContext(
+export function collectPackagePublishContext(
 	pkg: Package,
 	options: {
 		projectType: number;
@@ -301,13 +272,12 @@ function collectPackagePublishContext(
 		activeBranch: string;
 		includeHighResolution: number;
 	},
-): PackagePublishContext {
+): Omit<PackagePublishContext, 'publishedFiles'> {
 	const resources = pkg.listResources();
 	const excludedResourceIds = new Set(pkg.getSourceAtlasSettings().excludedResourceIds);
 	const resourceMap = new Map(resources.map((resource) => [resource.getId(), resource]));
 	const referencedIds = collectPackageResourceReferences(pkg).localResourceIds;
 	const pixelHitTestImageIds = new Set<string>();
-	const spriteItemIds = new Set<string>();
 	const collectExportedResourceIds = (
 		sourceResources: ReturnType<Package['listResources']>,
 		sourcePublishedResourceIds: Set<string>,
@@ -324,8 +294,10 @@ function collectPackagePublishContext(
 					continue;
 				}
 				const resource = resourcesById.get(resourceId);
-				if (!resource || !isSkeletonResource(resource)) continue;
-				for (const requiredId of resource.getRequireIds()) {
+				if (!resource) continue;
+				const requiredIds = isSkeletonResource(resource) ? resource.getRequireIds()
+					: isFontResource(resource) ? getFontDependencyImageIds(resource) : [];
+				for (const requiredId of requiredIds) {
 					if (!requiredId || excludedResourceIds.has(requiredId) || exportedResourceIds.has(requiredId)) continue;
 					exportedResourceIds.add(requiredId);
 					changed = true;
@@ -334,12 +306,6 @@ function collectPackagePublishContext(
 		}
 		return exportedResourceIds;
 	};
-
-	for (const atlas of pkg.listAtlases()) {
-		for (const sprite of atlas.listSprites()) {
-			if (!excludedResourceIds.has(sprite.getItemId())) spriteItemIds.add(sprite.getItemId());
-		}
-	}
 
 	for (const resource of resources) {
 		if (!isComponentResource(resource)) continue;
@@ -360,7 +326,7 @@ function collectPackagePublishContext(
 		}
 	}
 
-	const publishedResourceIds = new Set<string>(spriteItemIds);
+	const publishedResourceIds = new Set<string>();
 	for (const resource of resources) {
 		const resourceId = resource.getId();
 		if (!resourceId || excludedResourceIds.has(resourceId)) continue;
@@ -374,7 +340,6 @@ function collectPackagePublishContext(
 			if (
 				resource.getExported() ||
 				referencedIds.has(resourceId) ||
-				spriteItemIds.has(resourceId) ||
 				pixelHitTestImageIds.has(resourceId)
 			) {
 				publishedResourceIds.add(resourceId);
@@ -390,7 +355,7 @@ function collectPackagePublishContext(
 			continue;
 		}
 		if (isFontResource(resource)) {
-			if (resource.getExported() || referencedIds.has(resourceId)) {
+			if (!resource.isExternalFont() && (resource.getExported() || referencedIds.has(resourceId))) {
 				publishedResourceIds.add(resourceId);
 			}
 			continue;
@@ -557,7 +522,7 @@ async function applyPixelHitTests(
 	}
 }
 
-export async function annotatePackagePublishArtifacts(
+export async function preparePackagePublishContext(
 	pkg: Package,
 	basePath: string | undefined,
 	encoder: AtlasRasterBackend | undefined,
@@ -567,53 +532,25 @@ export async function annotatePackagePublishArtifacts(
 		activeBranch: string;
 		includeHighResolution: number;
 	},
-): Promise<void> {
-	const {
-		publishedResourceIds,
-		exportedResourceIds,
-		pixelHitTestImageIds,
-		highResolutionItemIds,
-		effectiveResourceIds,
-		includeBranches,
-	} = collectPackagePublishContext(pkg, options);
+): Promise<PackagePublishContext> {
+	const context = collectPackagePublishContext(pkg, options);
 	for (const resource of pkg.listResources()) {
-		setPublishedIdExtra(resource, effectiveResourceIds.get(resource.getId()) ?? null);
 		if (isHighResolutionResource(resource)) {
-			resource.setHighResolutionItemIds(highResolutionItemIds.get(resource.getId()) ?? []);
+			resource.setHighResolutionItemIds(context.highResolutionItemIds.get(resource.getId()) ?? []);
 		}
 	}
-	await applyPixelHitTests(pkg, pixelHitTestImageIds, basePath, encoder);
-	const extras = (pkg.getExtras() as PackagePublishArtifactsExtras | undefined) ?? {};
-	pkg.setExtras({
-		...extras,
-		publishedResourceIds: [...publishedResourceIds].sort((a, b) => a.localeCompare(b)),
-		exportedResourceIds: [...exportedResourceIds].sort((a, b) => a.localeCompare(b)),
-		publishedIncludeBranches: includeBranches,
-		publishedEffectiveResourceIds: Object.fromEntries(effectiveResourceIds),
-	});
+	await applyPixelHitTests(pkg, context.pixelHitTestImageIds, basePath, encoder);
+	const publishedFiles = new Map<string, string>();
 	for (const resource of pkg.listResources()) {
 		if (isMiscResource(resource)) {
-			setPublishedFileExtra(resource, resolvePublishedMiscFileName(resource, options.projectType));
-			continue;
-		}
-		if (isSwfResource(resource)) {
-			setPublishedFileExtra(resource, resolvePublishedSwfFileName(resource));
-			continue;
-		}
-		if (isSkeletonResource(resource)) {
-			setPublishedFileExtra(resource, resolvePublishedSkeletonFileName(resource, options.projectType));
+			publishedFiles.set(resource.getId(), resolvePublishedMiscFileName(resource, options.projectType, context.effectiveResourceIds));
+		} else if (isSwfResource(resource)) {
+			publishedFiles.set(resource.getId(), resolvePublishedSwfFileName(resource, context.effectiveResourceIds));
+		} else if (isSkeletonResource(resource)) {
+			publishedFiles.set(resource.getId(), resolvePublishedSkeletonFileName(resource, options.projectType));
 		}
 	}
-}
-
-export function getAnnotatedPublishedResourceIds(pkg: Package): Set<string> {
-	const extras = (pkg.getExtras() as PackagePublishArtifactsExtras | undefined) ?? {};
-	return new Set(extras.publishedResourceIds ?? []);
-}
-
-export function getAnnotatedExportedResourceIds(pkg: Package): Set<string> {
-	const extras = (pkg.getExtras() as PackagePublishArtifactsExtras | undefined) ?? {};
-	return new Set(extras.exportedResourceIds ?? []);
+	return { ...context, publishedFiles };
 }
 
 export function getPublishedSkeletonDependencyImageIds(pkg: Package, publishedResourceIds: Set<string>): Set<string> {

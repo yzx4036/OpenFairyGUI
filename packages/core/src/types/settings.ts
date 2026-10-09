@@ -14,6 +14,17 @@ export interface PublishSettings {
 	branchProcessing?: number;
 	seperatedAtlasForBranch?: boolean;
 	packageCount?: number;
+	/**
+	 * Directory (relative to project root) that OpenFairyGUI CLI scans for Node publish plugins.
+	 *
+	 * Default: `plugins`.
+	 *
+	 * Keep this OUT of `plugins/` when the same project is also edited in the FairyGUI
+	 * desktop editor — the editor treats every subdirectory under `plugins/` as a Lua
+	 * plugin and will fail to load non-Lua (TypeScript/Node) plugin directories
+	 * (OpenFairyGUI#2). Use e.g. `cli-plugins` and reference it here.
+	 */
+	pluginsDir?: string;
 	atlasSetting?: {
 		maxSize?: number;
 		paging?: boolean;

@@ -5,8 +5,40 @@ import path from 'node:path';
 import { getFixtureProjectPath } from '@openfairygui/test-utils';
 import { Document, GearType, } from '../src/index.js';
 import { NodeIO } from '../src/node.js';
+import { serializeDisplayList } from '../src/io/display-object-xml-writer.js';
 
 const _PROJECT_PATH = getFixtureProjectPath('FairyGUI-unity', 'UIProject/FairyGUI-Unity-Examples.fairy');
+
+test('behavior XML keeps tag filtering, sparse Gear pages and relation target order', (t) => {
+	const doc = new Document();
+	const group = doc.createGGroup('group').setId('g');
+	group.addGear(doc.createGear().setGearType(GearType.Icon).setPages('b,a,c')
+		.setPageValues({ b: '', a: null, c: '-' }).setDefaultValue('A|B'));
+	group.addGear(doc.createGear().setGearType(GearType.Color).setValues('#FFFFFF,#000000'));
+	group.addGear(doc.createGear().setGearType(GearType.XY).setPages('a')
+		.setValues('1.9,-2.9').setDefaultValue('0,0').setPositionsInPercent(true)
+		.setTween(true).setEaseType(0).setTweenDuration(0.5).setTweenDelay(0.1));
+	group.setRelations([
+		{ target: 'b', type: 14, usePercent: false },
+		{ target: 'a', type: 0, usePercent: true },
+		{ target: 'b', type: 15, usePercent: true },
+		{ target: '', type: 3, usePercent: false },
+	]);
+
+	t.is(serializeDisplayList([group]), '\n' + [
+		'    <group id="g" name="group" xy="0,0">',
+		'      <gearIcon pages="b,c" values="|-" default="A|B"/>',
+		'      <gearXY pages="a" values="1,-2" default="0,0" tween="true" ease="Linear" duration="0.5" delay="0.1" positionsInPercent="true"/>',
+		'      <relation target="b" sidePair="width-width,height-height%"/>',
+		'      <relation target="a" sidePair="left-left%"/>',
+		'      <relation target="" sidePair="center-center"/>',
+		'    </group>',
+	].join('\n') + '\n  ');
+
+	// Disallowed Gear kinds are still validated before serialization filters them.
+	group.addGear(doc.createGear().setGearType(GearType.Color));
+	t.throws(() => serializeDisplayList([group]), { message: /duplicate gearColor/ });
+});
 
 // ─── Round-trip: read → write → read ──────────────────────────────────────
 
@@ -116,7 +148,7 @@ test('round-trip: gear pages values and condition survive write→read', async (
 
 		const componentXml = await fs.readFile(path.join(tmpDir, 'assets', 'Demo4', 'GearHost.xml'), 'utf-8');
 		t.true(/<gearText\b[^>]*tween(?:="true")?/.test(componentXml), 'gear writes tween attr');
-		t.true(componentXml.includes('ease="Quad.Out"'), 'gear writes canonical ease attr');
+		t.false(componentXml.includes('ease="Quad.Out"'), 'editor omits the default ease even with a non-default duration');
 		t.true(componentXml.includes('duration="0.5"'), 'gear writes canonical duration attr');
 		t.true(componentXml.includes('<gearLook controller="state" pages="1" values="0.54,180,0,0" default="1,0,0"'), 'gearLook compresses bool payload to editor-style numeric tokens');
 		t.true(componentXml.includes('<gearColor controller="state" pages="1" values="#66ff99" default="#ffffff"'), 'gearColor omits redundant black outline payload for non-text objects');

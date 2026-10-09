@@ -19,7 +19,8 @@ export type ProjectDiagnosticCode =
 	| 'unreadable_source'
 	| 'corrupt_source'
 	| 'unsupported_resource_kind'
-	| 'decode_capability_unavailable';
+	| 'decode_capability_unavailable'
+	| 'top_view_opaque_blocks_touches';
 
 /** One stable, transport-neutral project diagnostic. */
 export interface ProjectDiagnostic {

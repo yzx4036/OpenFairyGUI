@@ -26,7 +26,7 @@ export const OPENFAIRYGUI_BACKEND_PROMPT_DEFINITIONS = [
 		text: [
 			'Use openfairygui_backend_get_capabilities first.',
 			'Read contractVersion, capabilitySchemaVersion, capability planes, methods, and runtime non-goals from the backend envelope.',
-			'Do not infer artifact publish/restore, subscriptions, persistent jobs, or cache source-of-truth support when the backend marks them unsupported.',
+			'Do not infer artifact publish/restore, subscriptions, or cache source-of-truth support when the backend marks them unsupported.',
 		].join('\n'),
 	},
 	{
@@ -56,6 +56,11 @@ export const OPENFAIRYGUI_BACKEND_PROMPT_DEFINITIONS = [
 		description: 'Guide a client through backend-owned revision checks without inventing operation grammar.',
 		text: [
 			'Use openfairygui_backend_get_session to read the current revision before mutation.',
+			'Use openfairygui_backend_get_project_outline for identities, then openfairygui_backend_query_entity for current properties at the returned revision.',
+			'For settings edits, query target {kind:"project"} or {kind:"package",selector:{packageId}}; copy entity.properties.settings, change the requested fields, and submit the complete settings to updateProjectSettings or updatePackageSettings.',
+			'Read openfairygui://contracts/operations and openfairygui://contracts/operations/{kind} for the current operation names and exact JSON parameters.',
+			'Call openfairygui_backend_preflight_transaction with the queried revision and planned operations to execute and discard an isolated preview; inspect the backend diagnostics.',
+			'A successful preview does not reserve a revision or guarantee save. Apply the same batch with expectedRevision set to the preview baseRevision; refresh properties and re-plan on stale revision.',
 			'Call openfairygui_backend_apply_transaction with sessionId, expectedRevision, and backend/UAM-owned operations.',
 			'If the backend returns a stale revision error, refresh the session snapshot and re-plan against the new revision.',
 			'Do not invent selector grammar, transaction grammar, or operation payload semantics at the MCP layer.',
@@ -74,12 +79,11 @@ export const OPENFAIRYGUI_BACKEND_PROMPT_DEFINITIONS = [
 	{
 		name: 'openfairygui_poll_runtime_state',
 		title: 'Poll OpenFairyGUI Runtime State',
-		description: 'Guide a client through event, job, and cache polling tools.',
+		description: 'Guide a client through event polling and synchronous cache snapshots.',
 		text: [
 			'Use openfairygui_backend_get_events for polling events with the backend cursor contract.',
-			'Use openfairygui_backend_list_jobs and openfairygui_backend_get_job for in-memory job snapshots.',
-			'Use openfairygui_backend_get_cache_snapshot and openfairygui_backend_refresh_cache for derived read-only cache state.',
-			'Subscriptions, persistent jobs, artifact jobs, and cache-as-source-of-truth behavior are not supported by backend P2.',
+			'Use openfairygui_backend_get_cache_snapshot for derived read-only cache state; openfairygui_backend_refresh_cache returns the refreshed snapshot synchronously.',
+			'Subscriptions and cache-as-source-of-truth behavior are not supported by the backend.',
 		].join('\n'),
 	},
 ] as const satisfies readonly OpenFairyGuiBackendPromptDefinition[];

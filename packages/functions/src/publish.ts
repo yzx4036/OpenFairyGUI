@@ -9,15 +9,16 @@ import {
 	type Transform,
 } from '@openfairygui/core';
 import { atlas } from './atlas.js';
-import { prepareMovieClipResource } from './atlas/inputs.js';
+import { collectFontTexture, prepareMovieClipResource } from './atlas/inputs.js';
 import type { PreparedJtaData } from './atlas/jta.js';
 import { publishCodeGeneration, resolveProjectBasePath } from './codegen.js';
-import { dirname, isAbsolutePathLike, trimTrailingSlashes } from './path-utils.js';
+import { dirname, expandPathVariables, isAbsolutePathLike, trimTrailingSlashes } from './path-utils.js';
 import { formatPluginError, type LoadedPlugin, shouldAbortPluginFailure } from './plugins/types.js';
 import type { PublishFileSystem } from './publish/contracts.js';
 import {
-	annotatePackagePublishArtifacts,
-	getAnnotatedPublishedResourceIds,
+	preparePackagePublishContext,
+	type PackagePublishContext,
+	isFontResource,
 	isMovieClipResource,
 } from './publish/package-context.js';
 import {
@@ -49,6 +50,7 @@ interface ResolvedProjectPublishConfig extends ResolvedPublishOptions {
 }
 
 interface ResolvedPackagePublishPlan {
+	context: PackagePublishContext;
 	pkg: Package;
 	outputDir?: string;
 	publishName: string;
@@ -177,7 +179,9 @@ export function publish(options: PublishOptions): Transform {
 			pkg: Package,
 			config: ResolvedProjectPublishConfig,
 			projectBasePath?: string,
-		): ResolvedPackagePublishPlan => {
+		): Omit<ResolvedPackagePublishPlan, 'context'> => {
+			const publishName = pkg.getPublishName() || pkg.getName();
+			const customProperties = doc.getRoot().getSettings().customProperties ?? {};
 			let outputDir: string | undefined;
 
 			if (options.output) {
@@ -190,13 +194,15 @@ export function publish(options: PublishOptions): Transform {
 				candidates.push(pkg.getPublishPath(), config.globalOutputPath);
 
 				for (const candidate of candidates) {
-					const resolved = resolveConfiguredOutputPath(candidate, projectBasePath);
+					const expanded = expandPathVariables(
+						expandPathVariables(candidate ?? '', { publish_file_name: publishName }), customProperties,
+					);
+					const resolved = resolveConfiguredOutputPath(expanded, projectBasePath);
 					if (!resolved) continue;
 					outputDir = resolved;
 					break;
 				}
 			}
-			const publishName = pkg.getPublishName() || pkg.getName();
 			const sourceAtlas = pkg.getSourceAtlasSettings();
 			const usePackageAtlas = !sourceAtlas.useGlobal;
 			const atlas: ResolvedPublishAtlasOptions = {
@@ -266,6 +272,7 @@ export function publish(options: PublishOptions): Transform {
 				await options.fs.mkdir(plan.outputDir!);
 				await exportPackageSounds(
 					plan.pkg,
+					plan.context,
 					plan.outputDir!,
 					options.basePath,
 					options.fs,
@@ -273,6 +280,7 @@ export function publish(options: PublishOptions): Transform {
 				);
 				await exportPackageExternalResources(
 					plan.pkg,
+					plan.context,
 					plan.outputDir!,
 					options.basePath,
 					options.fs,
@@ -288,9 +296,13 @@ export function publish(options: PublishOptions): Transform {
 				basePath: options.basePath,
 				outputPath: options.fs ? plan.outputDir : undefined,
 				mkdir: options.fs ? options.fs.mkdir : undefined,
+				onFileWritten: options.atlas?.onFileWritten,
 				readFileRaw: options.atlas?.readFileRaw ?? options.fs?.readFileRaw,
 				strictOutput: options.fs !== undefined,
 				preparedMovieClips,
+				publishResources: new Map(plan.pkg.listResources()
+					.filter((resource) => plan.context.publishedResourceIds.has(resource.getId()))
+					.map((resource) => [resource, plan.context.effectiveResourceIds.get(resource.getId()) ?? resource.getId()])),
 				packages: [plan.pkg.getName()],
 				...atlasRuntimeOptions,
 			})(doc);
@@ -301,6 +313,7 @@ export function publish(options: PublishOptions): Transform {
 			const bwOptions: BinaryWriterOptions = {
 				compressed: plan.compressed,
 				packageIndex,
+				packageContext: plan.context,
 			};
 
 			const bw = new BinaryWriter(writerFs);
@@ -337,19 +350,28 @@ export function publish(options: PublishOptions): Transform {
 			pkgMap.set(p.getId(), p);
 		}
 
+		const contexts = new Map<Package, PackagePublishContext>();
 		for (const pkg of allPackages) {
+			// Font image dependencies must be known before selecting resources and merging branches.
+			for (const font of pkg.listResources().filter(isFontResource)) {
+				await collectFontTexture(doc, font, pkg, {
+					basePath: options.basePath, readFileRaw: options.atlas?.readFileRaw ?? options.fs?.readFileRaw,
+				});
+			}
 			// Compute dependency list and selected publish artifacts before atlas packing,
 			// so merged-branch publishes can pack the overridden resources with main IDs.
 			_computeDependencies(doc, pkg, pkgMap);
-			await annotatePackagePublishArtifacts(pkg, options.basePath, options.encoder, {
+			contexts.set(pkg, await preparePackagePublishContext(pkg, options.basePath, options.encoder, {
 				projectType: resolved.projectType,
 				includeBranches: resolved.includeBranches,
 				activeBranch: resolved.activeBranch,
 				includeHighResolution: resolved.includeHighResolution,
-			});
+			}));
 		}
 
-		const plans = allPackages.map((pkg) => resolvePackagePublishPlan(pkg, resolved, projectBasePath));
+		const plans: ResolvedPackagePublishPlan[] = allPackages.map((pkg) => ({
+			...resolvePackagePublishPlan(pkg, resolved, projectBasePath), context: contexts.get(pkg)!,
+		}));
 
 		if (!options.fs) {
 			const outputPlan = plans.find((plan) => !!plan.outputDir);
@@ -380,8 +402,8 @@ export function publish(options: PublishOptions): Transform {
 
 		// publishPackage starts with mkdir and loose-resource writes. Preflight the complete
 		// selected MovieClip set first so a failure in a later package leaves zero output.
-		const publishedMovieClips = allPackages.flatMap((pkg) => {
-			const publishedResourceIds = getAnnotatedPublishedResourceIds(pkg);
+		const publishedMovieClips = plans.flatMap(({ pkg, context }) => {
+			const { publishedResourceIds } = context;
 			return pkg
 				.listResources()
 				.filter((resource): resource is MovieClipResource => {
@@ -444,7 +466,7 @@ export function publish(options: PublishOptions): Transform {
  * @internal
  */
 function _computeDependencies(doc: Document, pkg: Package, pkgMap: Map<string, Package>): void {
-	const referencedPkgIds = collectPackageResourceReferences(pkg).packageIds;
+	const referencedPkgIds = collectPackageResourceReferences(pkg, doc).packageIds;
 	const packageOrder = new Map(
 		doc
 			.getRoot()

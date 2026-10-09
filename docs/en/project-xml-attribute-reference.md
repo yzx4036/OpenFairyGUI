@@ -139,7 +139,7 @@ Current project write-back contract:
 | `restrictSize` |  | Root component size constraints |
 | `overflow` |  | Root component overflow mode |
 | `clipSoftness` |  | Soft clipping edge |
-| `opaque` |  | Whether the component is opaque |
+| `opaque` |  | Whether the component is opaque (hit-blocking). **Defaults to `true`**: touches that miss the component's children land on the component itself, so a full-screen `Type:View\|Layer:Top` view swallows touches aimed at lower layers; passive overlays (HUD/banner/hint) must declare `opaque="false"` (diagnostic `top_view_opaque_blocks_touches`) |
 | `mask` |  | Mask target |
 | `reversedMask` |  | Whether the mask is reversed |
 | `hitTest` |  | Hit-test resource |
@@ -675,6 +675,7 @@ These attributes apply to every concrete display-list object. The tag-specific t
 | `condition` |  | Gear condition |
 | `ease` |  | Easing type |
 | `duration` |  | Duration |
+| `delay` |  | Tween delay in seconds, default 0 |
 
 ### `<controller>`
 

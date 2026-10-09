@@ -1,40 +1,54 @@
 import type {
 	UamAssetResource,
-	UamComponentInstanceProperties,
-	UamComponentPropertyOverride,
 	UamComponentProperties,
 	UamControllerAction,
 	UamControllerModel,
 	UamDisplayNode,
 	UamGearBinding,
-	UamImageProperties,
 	UamImageResourceProperties,
-	UamMovieClipProperties,
 	UamMovieClipResourceProperties,
-	UamPlainTextProperties,
 	UamProject,
-	UamTextProperties,
 	UamValidationIssue,
 } from './model.js';
 import { normalizeResourceFolderPath, resourceFolderParentPath } from '../utils/resource-folder.js';
-import type { ProjectDiagnosticCode } from '../validation.js';
+import type { ProjectDiagnosticCode, ProjectDiagnosticSeverity } from '../validation.js';
+import { hasExactKeys, isFiniteUamPoint, isUiResourceReference } from './property-rules/values.js';
+import { isValidUamTextProperties, textPropertiesFromNode } from './property-rules/text.js';
+import { isValidUamImageProperties, isValidUamMovieClipProperties } from './property-rules/image.js';
+import { isValidUamComponentInstanceProperties, isValidUamComponentPropertyOverride } from './property-rules/component-instance.js';
+
+export { isFiniteUamPoint } from './property-rules/values.js';
+export { isValidUamTextProperties } from './property-rules/text.js';
+export { isValidUamImageProperties, isValidUamMovieClipProperties } from './property-rules/image.js';
+export { isValidUamComponentInstanceProperties, isValidUamComponentPropertyOverride } from './property-rules/component-instance.js';
 
 function pushIssue(
 	issues: UamValidationIssue[],
 	path: string,
 	message: string,
 	code: ProjectDiagnosticCode = 'invalid_uam',
+	severity: ProjectDiagnosticSeverity = 'error',
 ): void {
-	issues.push({ severity: 'error', code, path, message });
+	issues.push({ severity, code, path, message });
 }
 
-export function isFiniteUamPoint(value: unknown): boolean {
-	if (typeof value !== 'object' || value === null) return false;
-	const point = value as { x?: unknown; y?: unknown };
-	return typeof point.x === 'number'
-		&& Number.isFinite(point.x)
-		&& typeof point.y === 'number'
-		&& Number.isFinite(point.y);
+/** fork: 读取 `Type:View|Layer:Top` remark 方言（et-fui-codegen / ET FUI 约定）中的一段。 */
+function readRemarkSegment(remark: string, key: string): string {
+	for (const segment of remark.split('|')) {
+		const separator = segment.indexOf(':');
+		if (separator < 0) continue;
+		if (segment.slice(0, separator).trim().toLowerCase() === key) {
+			return segment.slice(separator + 1).trim();
+		}
+	}
+	return '';
+}
+
+export function isValidUamXYGearValue(value: unknown, positionsInPercent: boolean): boolean {
+	if (!isFiniteUamPoint(value)) return false;
+	const { px, py } = value as { px?: unknown; py?: unknown };
+	if (!positionsInPercent && px === undefined && py === undefined) return true;
+	return typeof px === 'number' && Number.isFinite(px) && typeof py === 'number' && Number.isFinite(py);
 }
 
 function isFiniteUamSize(value: unknown): boolean {
@@ -51,23 +65,6 @@ function isFiniteUamEdgeInsets(value: unknown): boolean {
 	const insets = value as { top?: unknown; bottom?: unknown; left?: unknown; right?: unknown };
 	return [insets.top, insets.bottom, insets.left, insets.right]
 		.every((part) => typeof part === 'number' && Number.isFinite(part));
-}
-
-function hasExactKeys(value: object, keys: readonly string[]): boolean {
-	const actual = Object.keys(value);
-	return actual.length === keys.length && actual.every((key) => keys.includes(key));
-}
-
-export function isValidUamComponentPropertyOverride(
-	value: unknown,
-): value is UamComponentPropertyOverride {
-	if (!value || typeof value !== 'object' || !hasExactKeys(value, ['target', 'propertyId', 'value'])) return false;
-	const property = value as UamComponentPropertyOverride;
-	return typeof property.target === 'string'
-		&& property.target.length > 0
-		&& Number.isSafeInteger(property.propertyId)
-		&& property.propertyId >= 0
-		&& typeof property.value === 'string';
 }
 
 const IMAGE_RESOURCE_PROPERTY_KEYS = [
@@ -151,173 +148,6 @@ export function isValidUamMovieClipResourceProperties(
 		&& frame.addDelay >= 0
 		&& typeof frame.spriteId === 'string'
 	));
-}
-
-const TEXT_PROPERTY_KEYS = [
-	'text',
-	'font',
-	'fontSize',
-	'color',
-	'align',
-	'vAlign',
-	'leading',
-	'letterSpacing',
-	'autoSize',
-	'singleLine',
-	'autoClearText',
-	'outlineSoftness',
-	'underlaySoftness',
-	'ubbEnabled',
-	'underline',
-	'italic',
-	'bold',
-	'strikethrough',
-	'strokeColor',
-	'strokeSize',
-	'shadowColor',
-	'shadowOffset',
-] as const satisfies readonly (keyof UamTextProperties)[];
-
-const PLAIN_TEXT_PROPERTY_KEYS = [
-	...TEXT_PROPERTY_KEYS,
-	'demoText',
-	'templateVarsEnabled',
-	'faceDilate',
-] as const satisfies readonly (keyof UamPlainTextProperties)[];
-
-type UamTextNodeKind = Extract<UamDisplayNode['kind'], 'text' | 'richText' | 'textInput'>;
-
-function isTextColor(value: unknown): value is string {
-	return typeof value === 'string' && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value);
-}
-
-export function isValidUamTextProperties(
-	value: unknown,
-	nodeKind: UamTextNodeKind,
-): value is UamTextProperties | UamPlainTextProperties {
-	const keys = nodeKind === 'richText' ? TEXT_PROPERTY_KEYS : PLAIN_TEXT_PROPERTY_KEYS;
-	if (typeof value !== 'object' || value === null || !hasExactKeys(value, keys)) return false;
-	const properties = value as UamPlainTextProperties;
-	const commonValid = [properties.text, properties.font].every((item) => typeof item === 'string')
-		&& Number.isInteger(properties.fontSize)
-		&& properties.fontSize > 0
-		&& isTextColor(properties.color)
-		&& Number.isInteger(properties.align)
-		&& properties.align >= 0
-		&& properties.align <= 2
-		&& Number.isInteger(properties.vAlign)
-		&& properties.vAlign >= 0
-		&& properties.vAlign <= 2
-		&& Number.isInteger(properties.leading)
-		&& Number.isInteger(properties.letterSpacing)
-		&& Number.isInteger(properties.autoSize)
-		&& properties.autoSize >= 0
-		&& properties.autoSize <= 4
-		&& [
-			properties.singleLine,
-			properties.autoClearText,
-			properties.ubbEnabled,
-			properties.underline,
-			properties.italic,
-			properties.bold,
-			properties.strikethrough,
-		].every((item) => typeof item === 'boolean')
-		&& typeof properties.outlineSoftness === 'number'
-		&& Number.isFinite(properties.outlineSoftness)
-		&& typeof properties.underlaySoftness === 'number'
-		&& Number.isFinite(properties.underlaySoftness)
-		&& typeof properties.strokeSize === 'number'
-		&& Number.isFinite(properties.strokeSize)
-		&& properties.strokeSize >= 0
-		&& (
-			properties.strokeColor === null
-				? properties.strokeSize === 1
-				: isTextColor(properties.strokeColor)
-		)
-		&& isFiniteUamPoint(properties.shadowOffset)
-		&& (
-			properties.shadowColor === null
-				? properties.shadowOffset.x === 0 && properties.shadowOffset.y === 0
-				: isTextColor(properties.shadowColor)
-		);
-	if (!commonValid || nodeKind === 'richText') return commonValid;
-	return typeof properties.demoText === 'string'
-		&& typeof properties.templateVarsEnabled === 'boolean'
-		&& typeof properties.faceDilate === 'number'
-		&& Number.isFinite(properties.faceDilate);
-}
-
-function textPropertiesFromNode(
-	node: Extract<UamDisplayNode, { kind: UamTextNodeKind }>,
-): UamTextProperties | UamPlainTextProperties {
-	const common: UamTextProperties = {
-		text: node.text,
-		font: node.font,
-		fontSize: node.fontSize,
-		color: node.color,
-		align: node.align,
-		vAlign: node.vAlign,
-		leading: node.leading,
-		letterSpacing: node.letterSpacing,
-		autoSize: node.autoSize,
-		singleLine: node.singleLine,
-		autoClearText: node.autoClearText,
-		outlineSoftness: node.outlineSoftness,
-		underlaySoftness: node.underlaySoftness,
-		ubbEnabled: node.ubbEnabled,
-		underline: node.underline,
-		italic: node.italic,
-		bold: node.bold,
-		strikethrough: node.strikethrough,
-		strokeColor: node.strokeColor,
-		strokeSize: node.strokeSize,
-		shadowColor: node.shadowColor,
-		shadowOffset: node.shadowOffset,
-	};
-	if (node.kind === 'richText') return common;
-	return {
-		...common,
-		demoText: node.demoText,
-		templateVarsEnabled: node.templateVarsEnabled,
-		faceDilate: node.faceDilate,
-	};
-}
-
-const IMAGE_PROPERTY_KEYS = [
-	'color',
-	'flip',
-	'fillMethod',
-	'fillOrigin',
-	'fillClockwise',
-	'fillAmount',
-] as const satisfies readonly (keyof UamImageProperties)[];
-
-export function isValidUamImageProperties(value: unknown): value is UamImageProperties {
-	if (typeof value !== 'object' || value === null || !hasExactKeys(value, IMAGE_PROPERTY_KEYS)) return false;
-	const properties = value as UamImageProperties;
-	return isTextColor(properties.color)
-		&& Number.isInteger(properties.flip) && properties.flip >= 0 && properties.flip <= 3
-		&& Number.isInteger(properties.fillMethod) && properties.fillMethod >= 0 && properties.fillMethod <= 5
-		&& Number.isInteger(properties.fillOrigin) && properties.fillOrigin >= 0 && properties.fillOrigin <= 3
-		&& typeof properties.fillClockwise === 'boolean'
-		&& typeof properties.fillAmount === 'number' && Number.isFinite(properties.fillAmount)
-		&& (properties.fillMethod === 0
-			? properties.fillOrigin === 0 && properties.fillClockwise && properties.fillAmount === 100
-			: properties.fillAmount >= 0 && properties.fillAmount <= 1);
-}
-
-const MOVIE_CLIP_PROPERTY_KEYS = [
-	'playing',
-	'frame',
-	'color',
-] as const satisfies readonly (keyof UamMovieClipProperties)[];
-
-export function isValidUamMovieClipProperties(value: unknown): value is UamMovieClipProperties {
-	if (typeof value !== 'object' || value === null || !hasExactKeys(value, MOVIE_CLIP_PROPERTY_KEYS)) return false;
-	const properties = value as UamMovieClipProperties;
-	return typeof properties.playing === 'boolean'
-		&& Number.isInteger(properties.frame) && properties.frame >= 0
-		&& isTextColor(properties.color);
 }
 
 const COMPONENT_PROPERTY_KEYS = [
@@ -447,92 +277,7 @@ export function isValidUamComponentProperties(value: unknown): value is UamCompo
 		));
 }
 
-function isNullableString(value: unknown): boolean {
-	return value === null || typeof value === 'string';
-}
-
-function isUiResourceReference(value: unknown): value is string {
-	return typeof value === 'string'
-		&& (value === '' || (value.startsWith('ui://') && value.length > 5 && !/\s/.test(value)));
-}
-
 const isSoundReference = isUiResourceReference;
-
-function isSoundVolume(value: unknown): value is number {
-	return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
-}
-
-export function isValidUamComponentInstanceProperties(
-	value: unknown,
-): value is UamComponentInstanceProperties {
-	if (typeof value !== 'object' || value === null || !('extensionType' in value)) return false;
-	const properties = value as UamComponentInstanceProperties;
-	const finite = (number: unknown) => typeof number === 'number' && Number.isFinite(number);
-	switch (properties.extensionType) {
-		case 'Button':
-			return hasExactKeys(properties, [
-				'extensionType', 'title', 'selectedTitle', 'icon', 'selectedIcon', 'titleColor',
-				'titleFontSize', 'controller', 'page', 'checked', 'sound', 'soundVolumeScale',
-			])
-				&& [
-					properties.title, properties.selectedTitle, properties.icon, properties.selectedIcon,
-					properties.titleColor, properties.controller, properties.page, properties.sound,
-				].every((item) => typeof item === 'string')
-				&& finite(properties.titleFontSize)
-				&& typeof properties.checked === 'boolean'
-				&& isSoundReference(properties.sound)
-				&& isSoundVolume(properties.soundVolumeScale);
-		case 'Label':
-			return hasExactKeys(properties, [
-				'extensionType', 'title', 'icon', 'titleColor', 'titleFontSize', 'promptText',
-				'sound', 'soundVolumeScale',
-			])
-				&& [properties.title, properties.icon, properties.promptText]
-					.every((item) => typeof item === 'string')
-				&& (properties.titleColor === '' || isTextColor(properties.titleColor))
-				&& finite(properties.titleFontSize)
-				&& isSoundReference(properties.sound)
-				&& isSoundVolume(properties.soundVolumeScale);
-		case 'ComboBox':
-			return hasExactKeys(properties, [
-				'extensionType', 'title', 'icon', 'titleColor', 'popupDirection', 'sound', 'soundVolumeScale',
-				'visibleItemCount', 'selectionController', 'autoClearItems', 'items',
-			])
-				&& [properties.title, properties.icon, properties.selectionController]
-					.every((item) => typeof item === 'string')
-				&& (properties.titleColor === '' || isTextColor(properties.titleColor))
-				&& Number.isInteger(properties.popupDirection)
-				&& properties.popupDirection >= 0
-				&& properties.popupDirection <= 2
-				&& isSoundReference(properties.sound)
-				&& isSoundVolume(properties.soundVolumeScale)
-				&& finite(properties.visibleItemCount)
-				&& typeof properties.autoClearItems === 'boolean'
-				&& Array.isArray(properties.items)
-				&& properties.items.every((item) => (
-					item
-					&& typeof item === 'object'
-					&& hasExactKeys(item, ['title', 'value', 'icon'])
-					&& isNullableString(item.title)
-					&& isNullableString(item.value)
-					&& isNullableString(item.icon)
-				));
-		case 'ProgressBar':
-			return hasExactKeys(properties, [
-				'extensionType', 'value', 'max', 'min', 'sound', 'soundVolumeScale',
-			])
-				&& [properties.value, properties.max, properties.min].every(finite)
-				&& isSoundReference(properties.sound)
-				&& isSoundVolume(properties.soundVolumeScale);
-		case 'Slider':
-			return hasExactKeys(properties, ['extensionType', 'value', 'max', 'min'])
-				&& [properties.value, properties.max, properties.min].every(finite);
-		case 'ScrollBar':
-			return hasExactKeys(properties, ['extensionType']);
-		default:
-			return false;
-	}
-}
 
 function validateControllerAction(
 	action: UamControllerAction,
@@ -562,6 +307,16 @@ function validateGearBinding(
 	path: string,
 	issues: UamValidationIssue[],
 ): void {
+	if (gear.kind === 'xy') {
+		for (const [valuePath, value] of [
+			[`${path}.defaultValue`, gear.defaultValue],
+			...gear.states.filter((state) => state.value !== null).map((state) => [`${path}.states.${state.pageId}.value`, state.value] as const),
+		] as const) {
+			if (value !== null && !isValidUamXYGearValue(value, gear.positionsInPercent)) {
+				pushIssue(issues, valuePath, 'XY gear values require finite x/y and paired finite px/py; percentage mode requires px/py.');
+			}
+		}
+	}
 	const controller = controllerMap.get(gear.controllerName);
 	if (!controller) {
 		pushIssue(issues, `${path}.controllerName`, `Unknown gear controller "${gear.controllerName}".`);
@@ -749,6 +504,21 @@ function validateDisplayNode(
 			pushIssue(issues, `${path}.pivotAsAnchor`, 'Display node pivotAsAnchor must be boolean.');
 		}
 	}
+	if (node.kind === 'component' && node.fileName !== undefined && typeof node.fileName !== 'string') {
+		pushIssue(issues, `${path}.fileName`, 'Component file name hint must be a string.');
+	}
+	if ((node.kind === 'component' || node.kind === 'button' || node.kind === 'label'
+		|| node.kind === 'comboBox' || node.kind === 'progressBar' || node.kind === 'slider'
+		|| node.kind === 'scrollBar') && node.pageController !== undefined) {
+		if (typeof node.pageController !== 'string') {
+			pushIssue(issues, `${path}.pageController`, 'Component page controller must be a string.');
+		} else if (node.pageController && !controllerMap.has(node.pageController)) {
+			pushIssue(issues, `${path}.pageController`, `Unknown page controller "${node.pageController}".`);
+		}
+	}
+	if (node.kind === 'component' && node.controllerOverrides !== undefined && typeof node.controllerOverrides !== 'string') {
+		pushIssue(issues, `${path}.controllerOverrides`, 'Component controller overrides must be a string of controller name/page ID pairs.');
+	}
 	if (node.kind === 'component'
 		&& node.propertyOverrides !== undefined
 		&& (!Array.isArray(node.propertyOverrides)
@@ -803,7 +573,12 @@ function validateDisplayNode(
 			pushIssue(issues, `${path}.group`, `Group reference "${node.group}" must target another group in the same component.`);
 		}
 	}
+	const gearKinds = new Set<UamGearBinding['kind']>();
 	for (const [gearIndex, gear] of node.gears.entries()) {
+		if (gearKinds.has(gear.kind)) {
+			pushIssue(issues, `${path}.gears[${gearIndex}]`, `A display node may only have one ${gear.kind} gear.`);
+		}
+		gearKinds.add(gear.kind);
 		validateGearBinding(gear, controllerMap, `${path}.gears[${gearIndex}]`, issues);
 	}
 	for (const [relationIndex, relation] of node.relations.entries()) {
@@ -882,6 +657,20 @@ export function validateUamProject(project: UamProject): UamValidationIssue[] {
 			const component = resource.component;
 			if (!isValidUamComponentProperties(component.properties)) {
 				pushIssue(issues, `${resourcePath}.component.properties`, 'Component properties must be a complete valid property snapshot.');
+			}
+			// fork: Layer:Top 的 View 若保持 opaque（默认 true），其范围内未命中子元素的点击会被 View 自身
+			// 吞掉，下层（Normal/Scene/Background）全部点不到；被动覆盖层（HUD/横幅/提示）必须显式
+			// opaque="false" 并给装饰元素 touchable="false"。
+			if (component.properties.opaque === true
+				&& readRemarkSegment(component.properties.remark ?? '', 'type').toLowerCase() === 'view'
+				&& readRemarkSegment(component.properties.remark ?? '', 'layer').toLowerCase() === 'top') {
+				pushIssue(
+					issues,
+					`${resourcePath}.component.properties.opaque`,
+					`Top layer view "${resource.name}" is touch-opaque (opaque defaults to true): touches that miss its children land on the view itself and never reach lower layers. Passive overlays must declare opaque="false"; keep the warning only for overlays that intentionally block.`,
+					'top_view_opaque_blocks_touches',
+					'warning',
+				);
 			}
 			const childIds = new Set<string>();
 			const groupIds = new Set<string>();

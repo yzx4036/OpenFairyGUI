@@ -448,6 +448,12 @@ export interface UamTextInputNode extends UamGroupableDisplayNodeBase, UamPlainT
 export interface UamComponentRefNode extends UamGroupableDisplayNodeBase {
 	kind: 'component';
 	resource: UamResourceRef;
+	/** Comma-separated controller name/page ID pairs configured on this instance. */
+	controllerOverrides?: string;
+	/** Parent component controller driving this instance's paged scrolling. */
+	pageController?: string;
+	/** Preserved editor file hint for this component instance; resource identifies the target. */
+	fileName?: string;
 	instanceProperties?: UamComponentInstanceProperties;
 	propertyOverrides?: UamComponentPropertyOverride[];
 }
@@ -602,6 +608,8 @@ export interface UamMovieClipNode extends UamGroupableDisplayNodeBase, UamMovieC
 }
 
 interface UamComponentDerivedNodeBase extends UamGroupableDisplayNodeBase {
+	/** Parent component controller driving this instance's paged scrolling. */
+	pageController?: string;
 	src: string;
 	packageId: string;
 }
@@ -755,7 +763,11 @@ export interface UamLookGearValue {
 	touchable: boolean;
 }
 
-export interface UamXYGearValue extends UamPoint {}
+export interface UamXYGearValue extends UamPoint {
+	/** Parent-relative coordinates: 0.5 means 50%. Required when positionsInPercent is true. */
+	px?: number;
+	py?: number;
+}
 
 export interface UamSizeGearValue extends UamSize {
 	scaleX: number;
@@ -791,7 +803,8 @@ interface UamValueBoundGear<TKind extends string, TValue> {
 	name: string;
 	controllerName: string;
 	states: UamGearPageState<TValue>[];
-	defaultValue: TValue;
+	/** Null preserves the owner's initial property value on pages without an explicit state. */
+	defaultValue: TValue | null;
 	condition: string;
 	positionsInPercent: boolean;
 	tween: boolean;

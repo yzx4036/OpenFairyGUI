@@ -1,6 +1,22 @@
 import type {
 	UamDisplayNodeKind,
+	UamDisplayNode,
+	UamDisplayNodeSelector,
+	UamComponentModel,
+	UamComponentSelector,
+	UamControllerModel,
+	UamControllerSelector,
+	UamTransitionModel,
+	UamTransitionSelector,
+	UamResourceSelector,
+	UamImageResource,
+	UamMovieClipResource,
+	UamGenericAssetResource,
+	UamComponentResource,
 	UamProject,
+	UamPackage,
+	UamPackageSettings,
+	UamPackageSelector,
 	UamResource,
 	UamTransactionOperation,
 } from '@openfairygui/core/uam';
@@ -13,6 +29,107 @@ import type {
 	BackendResponseMeta,
 } from '../contracts.js';
 import type { PathPolicyViolationError } from '../path-policy.js';
+import type { BACKEND_METHODS } from './capabilities.js';
+import type { BackendRuntime } from '../runtime.js';
+
+export type BackendMethodName = keyof BackendRuntime;
+
+export const BACKEND_ENTITY_QUERY_LIMITS = { maxBytes: 262144, maxDepth: 32, maxNodes: 100000 } as const;
+export const BACKEND_SESSION_READ_LIMITS = {
+	model: { maxBytes: 4194304, maxDepth: 64, maxNodes: 500000 },
+	resourceBytes: 1048576,
+} as const;
+
+/** The public UAM model, excluding only each asset resource's primary sourceBytes. */
+export type BackendSessionResourceModel = UamComponentResource | Omit<UamImageResource, 'sourceBytes'>
+	| Omit<UamMovieClipResource, 'sourceBytes'> | Omit<UamGenericAssetResource, 'sourceBytes'>;
+export interface BackendSessionPackageModel extends Omit<UamPackage, 'resources'> {
+	resources: BackendSessionResourceModel[];
+}
+export interface BackendSessionProjectModel extends Omit<UamProject, 'packages'> {
+	packages: BackendSessionPackageModel[];
+}
+export interface ReadSessionStateInput {
+	sessionId: string;
+	expectedRevision?: number;
+}
+export interface ReadResourceBytesInput {
+	sessionId: string;
+	expectedRevision: number;
+	selector: UamResourceSelector;
+}
+export interface BackendSessionStateSnapshot extends Pick<BackendSessionSnapshot, 'sessionId' | 'revision' | 'lastSavedRevision' | 'dirty' | 'uamFidelity'> {
+	project: BackendSessionProjectModel;
+	readDiagnostics: import('@openfairygui/core').ProjectDiagnostic[];
+	/** Source-read completeness, not a guarantee of resource bytes or downstream usability. */
+	readComplete: boolean;
+}
+export interface BackendResourceBytesSnapshot {
+	sessionId: string;
+	revision: number;
+	selector: UamResourceSelector;
+	/** Only primary bytes already held in this session; no filesystem hydration. */
+	sourceBytes: Uint8Array;
+}
+export interface SessionReadError {
+	code: 'session_read_failed';
+	message: string;
+	sessionId: string;
+	reason: 'invalid_query' | 'not_found' | 'ambiguous' | 'unsupported_resource' | 'bytes_unavailable' | 'response_budget_exceeded' | 'non_json_value';
+}
+export interface SessionStaleReadError {
+	code: 'stale_read';
+	message: string;
+	sessionId: string;
+	expectedRevision: number;
+	actualRevision: number;
+}
+export const BACKEND_TRANSACTION_PREVIEW_LIMITS = { maxBytes: 262144, maxEntries: 2000 } as const;
+/** Fixed resource projection. Binary content, source bookkeeping and arbitrary metadata are excluded. */
+export const BACKEND_RESOURCE_QUERY_FIELDS = [
+	'kind', 'id', 'name', 'path', 'exported', 'favorite', 'branch', 'branchItemIds',
+	'fileName', 'file', 'dimensions', 'image', 'movieClip',
+] as const;
+type ResourceQueryFields<T> = Pick<T, Extract<keyof T, typeof BACKEND_RESOURCE_QUERY_FIELDS[number]>>;
+export type BackendResourceSnapshot = ResourceQueryFields<UamImageResource> | ResourceQueryFields<UamMovieClipResource>
+	| ResourceQueryFields<UamGenericAssetResource> | ResourceQueryFields<UamComponentResource>;
+export type BackendComponentSnapshot = Pick<UamComponentModel, 'size' | 'properties' | 'customData'>;
+export type BackendProjectSnapshot = Pick<UamProject, 'projectId' | 'settings'>;
+export interface BackendPackageSnapshot {
+	id: string;
+	name: string;
+	settings: UamPackageSettings;
+}
+export type BackendEntityTarget =
+	| { kind: 'project' }
+	| { kind: 'package'; selector: UamPackageSelector }
+	| { kind: 'resource'; selector: UamResourceSelector }
+	| { kind: 'component'; selector: UamComponentSelector }
+	| { kind: 'displayNode'; selector: UamDisplayNodeSelector }
+	| { kind: 'controller'; selector: UamControllerSelector }
+	| { kind: 'transition'; selector: UamTransitionSelector };
+export interface QueryEntityInput {
+	sessionId: string;
+	target: BackendEntityTarget;
+}
+export interface BackendEntitySnapshot {
+	sessionId: string;
+	revision: number;
+	target: BackendEntityTarget;
+	entity: { kind: 'project'; properties: BackendProjectSnapshot }
+		| { kind: 'package'; properties: BackendPackageSnapshot }
+		| { kind: 'resource'; properties: BackendResourceSnapshot }
+		| { kind: 'component'; properties: BackendComponentSnapshot }
+		| { kind: 'displayNode'; properties: UamDisplayNode }
+		| { kind: 'controller'; properties: UamControllerModel }
+		| { kind: 'transition'; properties: UamTransitionModel };
+}
+export interface EntityQueryError {
+	code: 'entity_query_failed';
+	message: string;
+	sessionId: string;
+	reason: 'invalid_query' | 'not_found' | 'ambiguous' | 'response_budget_exceeded' | 'non_json_value';
+}
 
 /** An exclusive lock owned for the lifetime of one backend session. */
 export interface BackendSessionLock {
@@ -25,6 +142,25 @@ export interface BackendSessionLock {
 export interface BackendFileStat {
 	isFile(): boolean;
 	isDirectory(): boolean;
+}
+
+/** A failed staged write with an explicit outcome for the original project. */
+export class ProjectWriteTransactionError extends Error {
+	public readonly code = 'project_write_transaction_failed';
+
+	/** Recognizes the same contract across separately bundled Node/root or ESM/CJS entries. */
+	public static is(error: unknown): error is ProjectWriteTransactionError {
+		if (typeof error !== 'object' || error === null) return false;
+		const value = error as Partial<ProjectWriteTransactionError>;
+		return value.code === 'project_write_transaction_failed' && typeof value.message === 'string'
+			&& typeof value.diskMayBePartiallyUpdated === 'boolean'
+			&& Array.isArray(value.recoveryPaths) && value.recoveryPaths.every((path) => typeof path === 'string');
+	}
+
+	constructor(cause: unknown, public readonly diskMayBePartiallyUpdated: boolean, public readonly recoveryPaths: string[] = []) {
+		super(cause instanceof Error ? cause.message : String(cause), { cause });
+		this.name = 'ProjectWriteTransactionError';
+	}
 }
 
 export interface BackendFileSystem {
@@ -40,7 +176,7 @@ export interface BackendFileSystem {
 	validateProjectRoot?(projectRoot: string): Promise<void>;
 	/** Optional host-specific lock location. Node keeps it beside the project so directory swaps do not move it. */
 	getSessionLockPath?(canonicalProjectPath: string): string;
-	/** Runs project writes against a staged copy and commits them as one directory swap. */
+	/** Stages project writes. On failure, throw ProjectWriteTransactionError to report rollback and recovery paths. */
 	runProjectWriteTransaction?(
 		projectRoot: string,
 		write: (stagedFileSystem: BackendFileSystem) => Promise<void>,
@@ -94,6 +230,8 @@ export interface BackendCapabilityManifest {
 	diagnostics: {
 		stableCodes: true;
 		errorDiagnosticMirror: true;
+		recoveryGuides: 'all-formal-codes';
+		automaticRepair: false;
 	};
 }
 
@@ -103,31 +241,18 @@ export interface BackendCapabilities {
 	transactionKernelOwner: '@openfairygui/core';
 	appSeamOwner: '@openfairygui/functions';
 	runtimeOwner: '@openfairygui/backend';
-	methods: readonly [
-		'getCapabilities',
-		'openSession',
-		'openProjectSession',
-		'getSession',
-		'getProjectOutline',
-		'validateSession',
-		'applyTransaction',
-		'saveSession',
-		'materializeSession',
-		'closeSession',
-		'getEvents',
-		'getJob',
-		'listJobs',
-		'cancelJob',
-		'getCacheSnapshot',
-		'refreshCache',
-	];
+	methods: typeof BACKEND_METHODS;
 	read: {
 		capabilitySnapshot: true;
 		sessionSnapshot: true;
 		projectOutline: true;
+		entityQuery: { kinds: readonly BackendEntityTarget['kind'][]; projection: 'properties'; sourceBytes: false; limits: typeof BACKEND_ENTITY_QUERY_LIMITS };
+		sessionState: { sourceBytes: false; limits: typeof BACKEND_SESSION_READ_LIMITS.model };
+		resourceBytes: { expectedRevisionRequired: true; hydration: false; maxBytes: typeof BACKEND_SESSION_READ_LIMITS.resourceBytes };
 		projectValidation: true;
 	};
 	authoring: {
+		preflightTransaction: { mode: 'execute-and-discard'; reservesRevision: false; impact: 'model-diff'; limits: typeof BACKEND_TRANSACTION_PREVIEW_LIMITS };
 		applyTransaction: true;
 		saveSession: true;
 		resourceKinds: readonly string[];
@@ -168,17 +293,10 @@ export interface BackendCapabilities {
 			retentionLimit: 1000;
 			sequenceScope: 'runtime';
 		};
-		jobs: {
-			inMemory: true;
-			cooperativeCancel: true;
-			persistent: false;
-			supportedKinds: readonly ['cache.refresh'];
-			artifactJobs: false;
-			completedRetentionLimit: 100;
-		};
 		cache: {
 			derivedReadOnly: true;
-			keyedBy: 'canonicalPathKey';
+			keyedBy: 'sessionId';
+			refreshMode: 'synchronous';
 			sourceOfTruth: false;
 			refreshMethod: 'refreshCache';
 		};
@@ -258,6 +376,13 @@ export interface SessionNotFoundError {
 	sessionId: string;
 }
 
+export interface SessionCloseFailedError {
+	code: 'session_close_failed';
+	message: string;
+	sessionId: string;
+	lockFilePath: string;
+}
+
 export interface SessionStaleWriteError {
 	code: 'stale_write';
 	message: string;
@@ -301,6 +426,7 @@ export interface SavePartialFailureError {
 	committedPaths: string[];
 	failedPaths: string[];
 	diskMayBePartiallyUpdated: boolean;
+	recoveryPaths?: string[];
 }
 
 export interface UamFidelityUnsupportedError {
@@ -331,6 +457,7 @@ export interface MaterializeWriteFailedError {
 	skippedPaths: string[];
 	diagnostics: BackendDiagnostic[];
 	diskMayBePartiallyUpdated: boolean;
+	recoveryPaths?: string[];
 }
 
 export type BackendEventKind =
@@ -343,14 +470,7 @@ export type BackendEventKind =
 	| 'session.closeRequested'
 	| 'session.closed'
 	| 'cache.invalidated'
-	| 'cache.updated'
-	| 'job.created'
-	| 'job.started'
-	| 'job.progress'
-	| 'job.cancelRequested'
-	| 'job.cancelled'
-	| 'job.completed'
-	| 'job.failed';
+	| 'cache.updated';
 
 export interface BackendEvent {
 	sequence: number;
@@ -360,7 +480,6 @@ export interface BackendEvent {
 	canonicalPathKey?: string;
 	revision?: number;
 	cacheRevision?: number;
-	jobId?: string;
 	diagnostics: BackendDiagnostic[];
 	payload?: unknown;
 }
@@ -385,84 +504,6 @@ export interface EventCursorInvalidError {
 	after: string;
 }
 
-export type BackendJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-export type BackendJobKind = 'cache.refresh';
-export type BackendJobListStatusFilter = BackendJobStatus | 'active' | 'terminal';
-
-export interface BackendJobProgress {
-	completed: number;
-	total?: number;
-	message?: string;
-}
-
-export interface BackendJobSnapshot {
-	jobId: string;
-	kind: BackendJobKind;
-	status: BackendJobStatus;
-	createdAt: string;
-	startedAt?: string;
-	finishedAt?: string;
-	sessionId?: string;
-	canonicalPathKey?: string;
-	revision?: number;
-	cacheRevision?: number;
-	diagnostics: BackendDiagnostic[];
-	progress?: BackendJobProgress;
-	result?: unknown;
-	error?: BackendError;
-}
-
-export interface BackendJobListSnapshot {
-	jobs: BackendJobSnapshot[];
-}
-
-export interface GetJobInput {
-	sessionId: string;
-	jobId: string;
-}
-
-export interface ListJobsInput {
-	sessionId: string;
-	status?: BackendJobListStatusFilter;
-	kind?: BackendJobKind;
-	limit?: number;
-}
-
-export interface CancelJobInput {
-	sessionId: string;
-	jobId: string;
-}
-
-export interface BackendJobNotFoundError {
-	code: 'job_not_found';
-	message: string;
-	sessionId: string;
-	jobId: string;
-}
-
-export interface BackendJobNotCancellableError {
-	code: 'job_not_cancellable';
-	message: string;
-	sessionId: string;
-	jobId: string;
-	status: 'completed' | 'failed' | 'cancelled';
-}
-
-export interface BackendJobCancelledError {
-	code: 'job_cancelled';
-	message: string;
-	sessionId: string;
-	jobId: string;
-}
-
-export interface CacheRefreshFailedError {
-	code: 'cache_refresh_failed';
-	message: string;
-	sessionId: string;
-	jobId: string;
-	causeCode?: string;
-}
-
 export interface BackendCapabilityUnavailableError {
 	code: 'capability_unavailable';
 	message: string;
@@ -471,12 +512,6 @@ export interface BackendCapabilityUnavailableError {
 	requiredHost?: 'node';
 	bridgeBoundary?: 'external-bridge';
 }
-
-export type BackendJobErrors =
-	| BackendJobNotFoundError
-	| BackendJobNotCancellableError
-	| BackendJobCancelledError
-	| CacheRefreshFailedError;
 
 export interface BackendCacheSnapshot {
 	cacheRevision: number;
@@ -509,6 +544,11 @@ export interface RefreshCacheInput {
 
 export type BackendError =
 	| SessionNotFoundError
+	| SessionCloseFailedError
+	| TransactionPreviewError
+	| EntityQueryError
+	| SessionReadError
+	| SessionStaleReadError
 	| SessionIdConflictError
 	| SessionStaleWriteError
 	| InProcessLockConflictError
@@ -519,10 +559,6 @@ export type BackendError =
 	| MaterializeWriteFailedError
 	| PathPolicyViolationError
 	| EventCursorInvalidError
-	| BackendJobNotFoundError
-	| BackendJobNotCancellableError
-	| BackendJobCancelledError
-	| CacheRefreshFailedError
 	| BackendCapabilityUnavailableError
 	| ProjectRootNotAllowedError
 	| ProjectOpenFailedError
@@ -546,6 +582,42 @@ export interface ApplySessionTransactionInput {
 	operations: UamTransactionOperation[];
 }
 
+export interface BackendTransactionPreview {
+	sessionId: string;
+	baseRevision: number;
+	/** Revision after applying this batch at baseRevision, including an empty batch. Not reserved. */
+	projectedRevision: number;
+	mode: 'execute-and-discard';
+	/** Complete, bounded comparison of current and projected UAM, not unsaved changes since last save. */
+	impact: {
+		entities: BackendTransactionEntityChange[];
+		/** Project-relative paths from the actual ProjectWriter, including empty directories. Not a disk write plan. */
+		files: Array<{ path: string; kind: 'file' | 'directory'; change: 'added' | 'removed' | 'updated' }>;
+	};
+	persistence: {
+		requiredAfterApply: true;
+		nextAction: 'saveSession' | 'materializeSession' | 'host-action';
+		fileSystemAvailable: boolean;
+		uamFidelity: BackendSessionSnapshot['uamFidelity'];
+		/** Preflight never verifies filesystem permissions, materialize destinations or actual disk state. */
+		writeVerified: false;
+	};
+}
+
+export interface BackendTransactionEntityChange {
+	target: BackendEntityTarget;
+	change: 'added' | 'removed' | 'updated';
+	/** Changed top-level property names; child collections contain identities and preserve their order. */
+	fields: string[];
+}
+
+export interface TransactionPreviewError {
+	code: 'transaction_preview_failed';
+	message: string;
+	sessionId: string;
+	reason: 'response_budget_exceeded' | 'projection_failed';
+}
+
 export interface GetProjectOutlineInput {
 	sessionId: string;
 }
@@ -558,7 +630,9 @@ export interface OpenProjectSessionInput {
 	/** Authoritative UAM project. Use BackendRuntime.openSession() when importing an existing project from storage. */
 	project: UamProject;
 	sessionId?: string;
+	/** Session identity only; without explicit storage or a per-call filesystem this grants no filesystem access. */
 	canonicalProjectPath?: string;
+	/** Host-defined session identity; not a filesystem authorization or an allowed-root override. */
 	canonicalPathKey?: string;
 	/** Optional writeback target for the authoritative UAM project; this is not an import source. */
 	storage?: BackendProjectSessionStorage;

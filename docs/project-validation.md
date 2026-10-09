@@ -29,6 +29,8 @@ SVG 源文件校验接受标准的 `xmlns="http://www.w3.org/2000/svg"` 命名�
 
 （fork 增强）`remark` 为 `Type:View|Layer:Top` 的组件若保持 `opaque`（默认 `true`），会报告 `top_view_opaque_blocks_touches` 警告：FairyGUI 命中测试在组件范围内未命中子元素时返回组件自身，全屏 View 会因此吞掉下层（Normal/Scene/Background）全部点击。被动覆盖层（HUD/横幅/提示条）应显式 `opaque="false"` 并让装饰元素保持 `touchable="false"`；确需拦截的模态/引导层可忽略此警告。该诊断仅为 `warning`，不影响验证 `status` 与退出码。
 
+工程根、`assets`、分支或资源子目录枚举失败会产生 `unreadable_source`，详细读取返回 `complete: false`；只有可选 `assets` 目录明确不存在时才按空目录处理。返回混合文件/目录条目的适配器可通过 `stat` 区分目录；未提供 `stat` 时，资源子目录探测将 `ENOTDIR` / `TypeMismatchError` 视为普通文件并跳过，其他读取错误仍会报告，失败条目不会登记为空资源目录。Backend 将不完整文件读取标记为不支持完整写回，避免用部分模型覆盖源工程。
+
 当前纳入严格检查的已建模字段在进入宽松读取器前执行词法检查：布尔值接受 `true`、`false`、`1`、`0`；浮点值必须是有限十进制数，元组长度必须准确；透明度必须在 `0..1`；整数必须符合字段的 `Int32` 约束；枚举必须是当前读取器正式支持的取值。失败时报告 `invalid_project_value`，避免 `parseInt`、`parseFloat` 或默认枚举分支把错误值静默改成看似有效的 UAM。
 
 ## API
@@ -66,6 +68,20 @@ ofgui validate ./MyProject
 ofgui validate ./MyProject --json
 ```
 
-CLI 退出码为：`0` 有效、`1` 无效、`2` 验证不完整。`--json` 只向标准输出写入报告。
+CLI 退出码为：`0` 有效、`1` 无效/读取失败、`2` 参数错误、`3` 验证不完整。`--json` 只向标准输出写入一个统一 envelope；完整报告位于 `result`，无效/不完整同时带 `success:false` 与 `error`。见 [CLI 机器输出](./guide/contracts.md#cli-机器输出)。
 
 Backend 的 `validateSession({ sessionId })` 验证当前 revision 的 authoritative UAM，并把同一批诊断镜像到 response meta。MCP 工具 `openfairygui_backend_validate_session` 只做该方法的薄映射，不建立第二套规则。
+
+镜像到 Backend meta 的首批诊断附加归属、文档 URI 与结构化恢复建议；原始 `ProjectValidationReport` 的错误分类、完整性和正文保持不变。未知 code 不猜测修复方式，详见[诊断与恢复](./guide/diagnostics.md)。
+
+`ofgui doctor [project] --json` 组合安装版本/能力诊断与可选的 Node 工程验证。传入工程时返回磁盘的原始验证报告，不代表当前 session 的未保存状态；无工程时不测试工程源字节，但仍进行内存 PNG/JPEG 编码与像素解码。它不开会话、不取锁、不写探针；退出码 `0` 为本次检查完成、`1` 为错误、`2` 为参数错误、`3` 为原生图片检查不可用/失败或工程验证不完整，详见[安装版本文档与产品诊断](./guide/installed-docs.md)。
+
+## 事务支持检查、执行预演与工程验证
+
+| 入口 | 回答的问题 | 边界 |
+|---|---|---|
+| Core `validateTransactionSupport` | 当前模型/操作是否落在支持范围，参数与投影约束是否满足 | 不等同于完整执行成功 |
+| Backend `preflightTransaction` | 当前 revision 上这批操作经正式事务入口执行是否成功 | 在隔离工程上执行并丢弃；不修改会话，不预留 revision，不检查保存目标或承诺落盘成功 |
+| Backend `validateSession` | 当前已提交到会话的工程是否有效，已有读取/源文件检查是否完整 | 不预演待执行操作，不保存或发布 |
+
+安全编辑先通过 `queryEntity` 获取当前属性和 revision，再预演、正式 apply、验证并保存；正式 apply 和 save 仍各自检查 revision。预演失败沿用 Core/Functions 的事务诊断，不能把支持检查通过或预演成功当作工程验证报告。参数与只读边界见[契约指南](./guide/contracts.md#预演一次事务)。

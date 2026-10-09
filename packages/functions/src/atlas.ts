@@ -1,6 +1,7 @@
 import {
 	type Component,
 	type Document,
+	type Gear,
 	GearType,
 	type Package,
 	type MovieClipResource,
@@ -14,16 +15,15 @@ import {
 	isImageResource,
 	isMovieClipResource,
 	isSkeletonResource,
+	getFontDependencyImageIds,
 } from './publish/package-context.js';
 import { collectPackageResourceReferences } from './publish/resource-references.js';
-import type { ExtrasMap, HasOptionalSrc, HasOptionalUrl } from './shared-types.js';
+import type { HasOptionalSrc, HasOptionalUrl } from './shared-types.js';
 import { createTransform } from './utils.js';
 import {
 	collectFontTexture,
 	collectImage,
 	collectMovieClipFrames,
-	isPackableResource,
-	resolveFontFileName,
 	type InputItem,
 	type PackageResource,
 } from './atlas/inputs.js';
@@ -31,6 +31,8 @@ import { emitAtlasInputs, sortResourcesByOrder } from './atlas/packing.js';
 import type { PreparedJtaData } from './atlas/jta.js';
 
 export interface AtlasOptions {
+	/** Explicit resource selection and effective IDs for this transform. @internal */
+	publishResources?: ReadonlyMap<PackageResource, string>;
 	/**
 	 * Limit atlas generation to specific package names.
 	 * When omitted, all packages are processed.
@@ -105,6 +107,9 @@ export interface AtlasOptions {
 	 */
 	mkdir?: (path: string) => Promise<void>;
 
+	/** Host notification after an atlas file is successfully written. @internal */
+	onFileWritten?: (path: string) => void;
+
 	/**
 	 * Optional raw file reader for reading .jta MovieClip files.
 	 * Required for MovieClip frame atlas packing.
@@ -146,7 +151,7 @@ export interface AtlasOptions {
 const ATLAS_DEFAULTS: Required<
 	Omit<
 		AtlasOptions,
-		'packages' | 'encoder' | 'basePath' | 'outputPath' | 'mkdir' | 'readFileRaw' | 'preparedMovieClips'
+		'publishResources' | 'packages' | 'encoder' | 'basePath' | 'outputPath' | 'mkdir' | 'readFileRaw' | 'preparedMovieClips' | 'onFileWritten'
 	>
 > = {
 	maxSize: 2048,
@@ -171,12 +176,6 @@ interface AtlasReferenceItem {
 	selectedIcon?: string | null;
 	url?: string | null;
 	propertyOverrides?: Array<{ value: string }>;
-}
-
-interface GearWithAtlasRefs {
-	getGearType?(): number;
-	getValues?(): string;
-	getDefaultValue?(): unknown;
 }
 
 interface TransitionItemWithAtlasRefs {
@@ -210,11 +209,7 @@ interface ChildWithReferenceUrls extends HasOptionalSrc, HasOptionalUrl {
 	getListItems?(): AtlasReferenceItem[];
 	getAutoClearItems?(): boolean;
 	getPropertyOverrides?(): Array<{ value: string }>;
-	listGears?(): GearWithAtlasRefs[];
-}
-
-interface PackageAtlasExtras extends ExtrasMap {
-	publishedResourceIds?: string[];
+	listGears?(): Gear[];
 }
 
 function getSelectedSkeletonDependencyImageIds(resources: PackageResource[]): Set<string> {
@@ -234,7 +229,6 @@ function getSelectedSkeletonDependencyImageIds(resources: PackageResource[]): Se
 async function resolveEditorCompatibleResourceOrder(
 	pkg: Package,
 	allResources: PackageResource[],
-	options: AtlasOptions,
 ): Promise<PackageResource[]> {
 	const pkgId = pkg.getId();
 	const resourceMap = new Map(allResources.map((resource) => [resource.getId(), resource]));
@@ -249,22 +243,7 @@ async function resolveEditorCompatibleResourceOrder(
 		added.add(resourceId);
 		ordered.push(resource);
 		if (isFontResource(resource)) {
-			await addResource(resourceMap.get(resource.getTextureId?.() ?? ''));
-			if (options.readFileRaw && options.basePath) {
-				const fontName = resolveFontFileName(resource.getName());
-				const fontPath = resource.getPath() ?? '/';
-				const fntFile = `${options.basePath}/${pkg.getName()}${fontPath}${fontName}`;
-				try {
-					const fntData = await options.readFileRaw(fntFile);
-					const fntText = new TextDecoder().decode(fntData);
-					for (const line of fntText.split(/\r?\n/)) {
-						const imgMatch = line.match(/\bimg=(\w+)/);
-						if (imgMatch) await addResource(resourceMap.get(imgMatch[1] ?? ''));
-					}
-				} catch {
-					/* ignore */
-				}
-			}
+			for (const imageId of getFontDependencyImageIds(resource)) await addResource(resourceMap.get(imageId));
 		}
 		if (isComponentResource(resource)) {
 			componentStack.push(resource);
@@ -290,13 +269,10 @@ async function resolveEditorCompatibleResourceOrder(
 		await addResource(resourceMap.get(resourceId));
 	}
 
-	async function addGearIconResources(gear: GearWithAtlasRefs): Promise<void> {
-		if (gear.getGearType?.() !== GearType.Icon) return;
-		const values = gear.getValues?.();
-		if (typeof values === 'string' && values) {
-			for (const value of values.split('|')) {
-				await addResourceByLocalUiUrl(value.trim());
-			}
+	async function addGearIconResources(gear: Gear): Promise<void> {
+		if (gear.getGearType() !== GearType.Icon) return;
+		for (const value of Object.values(gear.getPageValues())) {
+			await addResourceByLocalUiUrl(value);
 		}
 		const defaultValue = gear.getDefaultValue?.();
 		if (typeof defaultValue === 'string') {
@@ -419,26 +395,21 @@ export function atlas(_options: AtlasOptions = {}): Transform {
 
 		for (const pkg of root.listPackages()) {
 			if (packageFilter && !packageFilter.has(pkg.getName())) continue;
-			// Publish annotations select merged resources; only strict output treats an empty selection as explicit.
-			const publishedResourceIds = (pkg.getExtras() as PackageAtlasExtras | undefined)?.publishedResourceIds;
-			const selectedPublishIds = new Set(publishedResourceIds);
+			// Only strict output treats an empty publish selection as explicit.
+			const selectedResources = options.publishResources;
 			const hasPublishSelection =
-				publishedResourceIds !== undefined && (options.strictOutput || selectedPublishIds.size > 0);
+				selectedResources !== undefined && (options.strictOutput || selectedResources.size > 0);
 			const allResources =
 				hasPublishSelection
-					? pkg.listResources().filter((resource) => selectedPublishIds.has(resource.getId()))
+					? pkg.listResources().filter((resource) => selectedResources!.has(resource))
 					: pkg.listResources();
+			for (const font of allResources.filter(isFontResource)) await collectFontTexture(doc, font, pkg, options);
 			const skeletonDependencyImageIds = getSelectedSkeletonDependencyImageIds(allResources);
 			// Process resources in declaration order (matching editor behavior)
-			const orderedResources = await resolveEditorCompatibleResourceOrder(pkg, allResources, options);
+			const orderedResources = await resolveEditorCompatibleResourceOrder(pkg, allResources);
 			const resourceOrder = new Map(orderedResources.map((resource, index) => [resource.getId(), index]));
 			const inputOrder = new Map(allResources.map((resource, index) => [resource.getId(), index]));
 			const orderedAllResources = sortResourcesByOrder(allResources, resourceOrder, inputOrder);
-			const hasPackable = allResources.some((resource) => {
-				if (isImageResource(resource) && skeletonDependencyImageIds.has(resource.getId())) return false;
-				return isPackableResource(resource);
-			});
-			if (!hasPackable) continue;
 
 			// Collect packable items in declaration order
 			const inputs: InputItem[] = [];
@@ -453,24 +424,7 @@ export function atlas(_options: AtlasOptions = {}): Transform {
 				}
 				// Font texture references and glyph image references
 				if (isFontResource(res)) {
-					const textureId = res.getTextureId?.() ?? '';
-					if (textureId) referencedIds.add(textureId);
-					// Parse .fnt file for glyph image references
-					if (options.readFileRaw && options.basePath) {
-						const fontName = resolveFontFileName(res.getName());
-						const fontPath = res.getPath() ?? '/';
-						const fntFile = `${options.basePath}/${pkg.getName()}${fontPath}${fontName}`;
-						try {
-							const fntData = await options.readFileRaw(fntFile);
-							const fntText = new TextDecoder().decode(fntData);
-							for (const line of fntText.split(/\r?\n/)) {
-								const match = line.match(/img=(\w+)/);
-								if (match) referencedIds.add(match[1]);
-							}
-						} catch {
-							/* .fnt file not found — OK */
-						}
-					}
+					for (const imageId of getFontDependencyImageIds(res)) referencedIds.add(imageId);
 				}
 			}
 
@@ -480,7 +434,7 @@ export function atlas(_options: AtlasOptions = {}): Transform {
 					const resId = res.getId();
 					if (skeletonDependencyImageIds.has(resId)) continue;
 					if (
-						selectedPublishIds.size === 0 &&
+						!selectedResources?.size &&
 						!res.getExported() &&
 						referencedIds.size > 0 &&
 						!referencedIds.has(resId)
@@ -490,33 +444,35 @@ export function atlas(_options: AtlasOptions = {}): Transform {
 				} else if (isMovieClipResource(res)) {
 					const resId = res.getId();
 					if (
-						selectedPublishIds.size === 0 &&
+						!selectedResources?.size &&
 						!res.getExported() &&
 						referencedIds.size > 0 &&
 						!referencedIds.has(resId)
 					)
 						continue;
 					await collectMovieClipFrames(doc, res, pkg, inputs, encoder, options, logger);
-				} else if (isFontResource(res)) {
-					const resId = res.getId();
-					if (
-						selectedPublishIds.size === 0 &&
-						!res.getExported() &&
-						referencedIds.size > 0 &&
-						!referencedIds.has(resId)
-					)
-						continue;
-					await collectFontTexture(doc, res, pkg, options);
 				}
 			}
 
-			if (inputs.length === 0) continue;
-			if (options.strictOutput && (!encoder || !options.basePath || !options.outputPath)) {
+			if (inputs.length > 0 && options.strictOutput && (!encoder || !options.basePath || !options.outputPath)) {
 				throw new Error(
 					`atlas: Package "${pkg.getName()}" requires encoder, basePath, and outputPath for complete raster output.`,
 				);
 			}
-			await emitAtlasInputs({ doc, pkg, allResources, inputs, options, encoder, logger });
+			const previousAtlases = pkg.listAtlases();
+			try {
+				await emitAtlasInputs({ doc, pkg, allResources, inputs, options, encoder, logger });
+			} catch (error) {
+				for (const atlas of pkg.listAtlases().filter((item) => !previousAtlases.includes(item))) {
+					for (const sprite of atlas.listSprites()) sprite.dispose();
+					atlas.dispose();
+				}
+				throw error;
+			}
+			for (const atlas of previousAtlases) {
+				for (const sprite of atlas.listSprites()) sprite.dispose();
+				atlas.dispose();
+			}
 		}
 	});
 }

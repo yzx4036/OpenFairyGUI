@@ -1,10 +1,51 @@
 import test from 'ava';
-import { Document } from '@openfairygui/core';
+import { Document, ProjectType } from '@openfairygui/core';
 import {
+	AUTO_GENERATED_CODE_MARK,
 	buildCodegenClasses,
+	publishCodeGeneration,
 	type CodegenMember,
 	type ResolvedPackageCodegenPlan,
 } from '../src/codegen.js';
+
+test('Chinese code generation preserves distinct files, bindings and member types on Unity and Laya', async (t) => {
+	for (const projectType of [ProjectType.Unity, ProjectType.LayaBox, ProjectType.CocosCreator]) {
+		const doc = new Document();
+		doc.getRoot().setProjectType(projectType).setSettings({
+			customProperties: { root: 'generated-$&' }, publish: { codeGeneration: { codePath: '{root}' } },
+		});
+		const pkg = doc.createPackage('界面').setId('codepkg1').setGenCode(true);
+		const names = ['奖励面板', '设置面板', '奖励面版', 'MainPanel'];
+		for (const [index, name] of names.entries()) {
+			const component = doc.createComponent(name).setId(`cmp${index}`).setExported(true);
+			for (const [childIndex, childName] of ['标题', '标提', 'BiaoTi_2'].entries()) {
+				component.addChild(doc.createGTextField(childName).setId(`n${childIndex}`));
+			}
+			if (index === 0) component.addChild(doc.createGComponent('设置').setId('panel').setSrc('cmp2'));
+			pkg.addResource(component);
+		}
+		const writes = new Map<string, string>();
+		const options = { packages: [pkg], fs: {
+			join: (...parts: string[]) => parts.join('/'), async mkdir() {},
+			async writeFileRaw(file: string, bytes: Uint8Array) {
+				t.false(writes.has(file), `no output may overwrite another class: ${file}`);
+				writes.set(file, new TextDecoder().decode(bytes));
+			},
+		} };
+		await publishCodeGeneration(doc, options);
+		const extension = projectType === ProjectType.Unity ? 'cs' : 'ts';
+		const classNames = ['UI_JiangLiMianBan', 'UI_SheZhiMianBan', 'UI_JiangLiMianBan_2', 'UI_MainPanel'];
+		t.deepEqual([...writes.keys()], [...classNames, 'JieMianBinder'].map((name) => `generated-$&/JieMian/${name}.${extension}`));
+		const main = writes.get(`generated-$&/JieMian/${classNames[0]}.${extension}`)!;
+		t.true(main.includes('UI_JiangLiMianBan_2'));
+		t.true(main.includes('m_BiaoTi_2_2'));
+		const binder = writes.get(`generated-$&/JieMian/JieMianBinder.${extension}`)!;
+		for (const name of classNames) t.true(binder.includes(`${name}.URL`));
+		const previous = new Map(writes); writes.clear();
+		await publishCodeGeneration(doc, options);
+		t.deepEqual(writes, previous, 'regeneration is deterministic');
+	}
+});
 
 function createPlan(): ResolvedPackageCodegenPlan {
 	return createPlanWithIgnoreNoname(false);
@@ -377,3 +418,36 @@ test('buildCodegenClasses uses component base types for all referenced component
 		}
 	}
 });
+
+	test('code generation cleans only marked language files before writing and propagates output failure', async (t) => {
+		for (const projectType of [ProjectType.Unity, ProjectType.LayaBox, ProjectType.CocosCreator]) {
+			const doc = new Document();
+			doc.getRoot().setProjectType(projectType).setSettings({ publish: { codeGeneration: { codePath: 'generated' } } });
+			const pkg = doc.createPackage('Demo').setId('codepkg1').setGenCode(true);
+			pkg.addResource(doc.createComponent('Main').setId('main').addChild(doc.createGTextField('title').setId('n0')));
+			const extension = projectType === ProjectType.Unity ? '.cs' : '.ts';
+			const otherExtension = extension === '.cs' ? '.ts' : '.cs';
+			const events: string[] = [];
+			const files = new Map([
+				['Stale' + extension, AUTO_GENERATED_CODE_MARK + '\nold'],
+				['Keep' + extension, 'user code'],
+				['Other' + otherExtension, AUTO_GENERATED_CODE_MARK],
+			]);
+			await t.throwsAsync(publishCodeGeneration(doc, { packages: [pkg], fs: {
+				join: (...parts: string[]) => parts.join('/'),
+				async mkdir(path) { events.push('mkdir:' + path); },
+				async readdir() { return [...files.keys(), 'Unreadable' + extension]; },
+				async readFileRaw(path) {
+					const content = files.get(path.split('/').at(-1)!);
+					if (content === undefined) throw new Error('unreadable');
+					return new TextEncoder().encode(content);
+				},
+				async deleteFile(path) { events.push('delete:' + path); },
+				async writeFileRaw(path) { events.push('write:' + path); throw new Error('write failed'); },
+			} }), { message: 'write failed' });
+			t.deepEqual(events, [
+				'mkdir:generated', 'mkdir:generated/Demo',
+				'delete:generated/Demo/Stale' + extension, 'write:generated/Demo/UI_Main' + extension,
+			]);
+		}
+	});

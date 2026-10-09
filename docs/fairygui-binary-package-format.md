@@ -96,6 +96,8 @@
 
 ## 字符串表
 
+长度前缀字符串、子缓冲区和块偏移必须位于所属缓冲区范围内；字符串表索引必须指向现有条目或协议定义的空值哨兵，越界索引不是空字符串。
+
 ### Block 4
 
 | 内容 | 协议说明 |
@@ -160,6 +162,8 @@ Writer 对协议中的 `uint8 / int8 / uint16 / int16 / uint32 / int32`、UTFStr
 | `height` | 资源高度 |
 
 `Font` glyph 数据块以 `uint16` 保存 UTF-16 code unit（`charId`），因此可覆盖完整 BMP 范围；后续图像引用和字形度量按各自的字符串表索引与 `int32` 字段保存。
+
+位图字体的字形图像引用必须可在同包资源与精灵表中解析；使用整张字体纹理时，精灵以字体 ID 寻址。合并分支后的 glyph 图像 ID 指向合并后的资源。导入的 TTF/TTC/OTF 使用引擎字体名称作为文本的 `font`，不编码为位图 `Font` 资源。
 
 ### `Spine` / `DragoneBones` item 数据段
 
@@ -296,6 +300,8 @@ Writer 对协议中的 `uint8 / int8 / uint16 / int16 / uint32 / int32`、UTFStr
 | overflow | `Visible` / `Hidden` / `Scroll` |
 | clipSoftness | `x`、`y` |
 
+Component header 和 child 的 pivot 存在标志在任一坐标非零或 `pivotAsAnchor=true` 时成立；`(0,0,true)` 与缺省 pivot 不同。
+
 #### Block 1：Controllers
 
 每个 controller 自带一个 3-block index table：
@@ -351,6 +357,8 @@ Writer 对协议中的 `uint8 / int8 / uint16 / int16 / uint32 / int32`、UTFStr
 |---|---|
 | target | 优先按 child index 解析 |
 | relation pairs | 每个 target 下有多个 relation type + `usePercent` 组合 |
+
+组件根和 child 的 relation target 使用同一份已发布 child 列表的索引。普通 Group（`advanced=false`）不占据该列表的槽位；advanced Group 保留槽位。父级目标使用 `-1`。
 
 #### Block 4：Advanced properties
 
@@ -544,6 +552,12 @@ Tree 项的 `isFolder` 在二进制中没有 `null` 表示，因此编码时按�
 | tween | ease、duration、delay、custom ease path |
 | 扩展状态 | GearXY percent、GearAnimation 扩展状态等条件字段 |
 
+每个 child 的每种 Gear 类型只有一个槽位，绑定哪个 controller 不改变该约束；Display 与 Display2 是独立类型。XY 百分比扩展保存相对父级尺寸的 `px/py` 浮点值（`0.5` 表示 50%）。Size 的缩放值和 Look 的 alpha 允许为 `0`。
+
+XY、Size、Look、Color、Animation、FontSize、Text 和 Icon 的默认状态是否存在由独立布尔值表示。省略默认状态时，运行时保留从对象初始属性捕获的默认值；未配置页面回到该状态，不替换为零尺寸、白色或固定字号。
+
+Text/Icon 的空字符串、`-` 和含 `|` 的字符串均是完整状态值。null page 不携带状态 payload；default 的存在由独立布尔值表示，因此未提供默认覆盖与显式空字符串不同。
+
 #### Transition
 
 | 内容 | 要求 |
@@ -552,6 +566,8 @@ Tree 项的 `isFolder` 在二进制中没有 `null` 表示，因此编码时按�
 | tween | `duration`、`easeType`、`repeat`、`yoyo`、`endLabel` |
 | value | `value` / `startValue` / `endValue` |
 | path | `path`、custom ease path |
+
+Scale 的 `0` 是有效缩放值。Sound 的音量 `0` 表示静音，嵌套 Transition 的播放次数 `0` 表示停止；这些值不使用缺省值替换。
 
 #### ScrollPane
 

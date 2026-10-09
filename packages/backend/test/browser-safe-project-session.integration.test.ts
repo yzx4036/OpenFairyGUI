@@ -222,6 +222,7 @@ class FailingMemoryBrowserStorage extends MemoryBrowserStorage {
 }
 
 class PausingMemoryBrowserStorage extends MemoryBrowserStorage {
+	public writeAttempts = 0;
 	private releaseWrite = (): void => undefined;
 	private readonly resumeWrite = new Promise<void>((resolve) => {
 		this.releaseWrite = resolve;
@@ -237,6 +238,7 @@ class PausingMemoryBrowserStorage extends MemoryBrowserStorage {
 	}
 
 	public override async writeFileRaw(filePath: string, data: Uint8Array): Promise<void> {
+		this.writeAttempts += 1;
 		if (this.paused) {
 			this.paused = false;
 			this.markWriteStarted();
@@ -599,13 +601,95 @@ test('root backend entry opens pure UAM project sessions without a filesystem ad
 	if (saveFailure.error.code === 'capability_unavailable') {
 		t.is(saveFailure.error.capability, 'fileSystem');
 	}
-	t.deepEqual(saveFailure.meta.diagnostics, [
+	t.deepEqual(saveFailure.meta.diagnostics.map(({ owner, docsUri, remediation, ...diagnostic }) => diagnostic), [
 		{
 			code: 'capability_unavailable',
 			message: 'saveSession requires an injected BackendFileSystem adapter.',
 			severity: 'error',
 		},
 	]);
+});
+
+test('pure UAM sessions do not inherit runtime storage and can bind explicit host storage later', async (t) => {
+	const ambientCalls: string[] = [];
+	const ambientFileSystem = new Proxy(createBackendStorageFileSystem(new MemoryBrowserStorage()), {
+		get(target, key, receiver) {
+			const value = Reflect.get(target, key, receiver);
+			return typeof value === 'function' ? () => {
+				ambientCalls.push(String(key));
+				throw new Error('A pure UAM session must not access the runtime filesystem.');
+			} : value;
+		},
+	});
+	const runtime = new BackendRuntime({ fileSystem: ambientFileSystem });
+	const opened = runtime.openProjectSession({ project: createBackendFixtureProject(), canonicalProjectPath: 'memory://browser-project' });
+	t.true(opened.ok);
+	if (!opened.ok) return;
+	const sessionId = opened.data.sessionId;
+	const transaction = { sessionId, expectedRevision: 0, operations: [{
+		kind: 'setDisplayNodeProps' as const,
+		selector: { packageId: 'pkg001', componentResourceId: 'cmp001', displayNodeId: 'n1' },
+		props: { text: 'Host-owned storage required' },
+	}] };
+	t.true(runtime.getProjectOutline({ sessionId }).ok);
+	t.true(runtime.queryEntity({ sessionId, target: { kind: 'project' } }).ok);
+	t.true(runtime.validateSession({ sessionId }).ok);
+	const preview = await runtime.preflightTransaction(transaction);
+	t.true(preview.ok);
+	if (preview.ok) {
+		t.false(preview.data.persistence.fileSystemAvailable);
+		t.is(preview.data.persistence.nextAction, 'host-action');
+	}
+	t.true((await runtime.applyTransaction(transaction)).ok);
+	for (const result of [
+		await runtime.saveSession({ sessionId, expectedRevision: 1 }),
+		await runtime.saveSession({ sessionId, expectedRevision: 1, force: true }),
+		await runtime.materializeSession({ sessionId, expectedRevision: 1 }),
+	]) {
+		t.false(result.ok);
+		if (!result.ok) t.is(result.error.code, 'capability_unavailable');
+	}
+	const unchanged = runtime.getSession({ sessionId });
+	t.true(unchanged.ok);
+	if (unchanged.ok) {
+		t.is(unchanged.data.revision, 1);
+		t.is(unchanged.data.lastSavedRevision, 0);
+		t.true(unchanged.data.dirty);
+	}
+	t.deepEqual(ambientCalls, []);
+	const storage = new MemoryBrowserStorage();
+	const materialized = await runtime.materializeSession({
+		sessionId, expectedRevision: 1,
+		storage: { fileSystem: createBackendStorageFileSystem(storage), fairyPath: 'Project.fairy' },
+	});
+	t.true(materialized.ok);
+	t.true(storage.hasFile('Project.fairy'));
+	t.true((await runtime.applyTransaction({ ...transaction, expectedRevision: 1, operations: [{
+		...transaction.operations[0], props: { text: 'Saved through bound storage' },
+	}] })).ok);
+	t.true((await runtime.saveSession({ sessionId, expectedRevision: 2 })).ok);
+	t.deepEqual(ambientCalls, []);
+	await runtime.closeSession({ sessionId });
+});
+
+test('pure UAM sessions retain explicit per-call filesystem materialize and save', async (t) => {
+	const runtime = new BackendRuntime();
+	const storage = new MemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const opened = runtime.openProjectSession({ project: createBackendFixtureProject(), canonicalProjectPath: 'Project.fairy' });
+	t.true(opened.ok);
+	if (!opened.ok) return;
+	const sessionId = opened.data.sessionId;
+	t.true((await runtime.materializeSession({ sessionId, expectedRevision: 0, fileSystem })).ok);
+	t.true(storage.hasFile('Project.fairy'));
+	t.true((await runtime.applyTransaction({ sessionId, expectedRevision: 0, operations: [{
+		kind: 'setDisplayNodeProps',
+		selector: { packageId: 'pkg001', componentResourceId: 'cmp001', displayNodeId: 'n1' },
+		props: { text: 'Explicit host save' },
+	}] })).ok);
+	t.true((await runtime.saveSession({ sessionId, expectedRevision: 1, fileSystem })).ok);
+	t.true((await runtime.saveSession({ sessionId, expectedRevision: 1 })).ok);
+	await runtime.closeSession({ sessionId });
 });
 
 test('file-backed openSession declares the missing filesystem capability instead of loading Node', async (t) => {
@@ -2627,7 +2711,7 @@ test('bound browser storage is not replaced by a saveSession filesystem override
 	}
 });
 
-test('browser-safe LayaBox storage sessions reject lossy UAM saves before touching storage', async (t) => {
+test('browser-safe LayaBox storage sessions preserve resource and gear edits through saves', async (t) => {
 	const storage = new MemoryBrowserStorage();
 	const projectRoot = 'LayaBoxProject';
 	const fairyPath = `${projectRoot}/${path.basename(LAYABOX_PROJECT_PATH)}`;
@@ -2661,7 +2745,7 @@ test('browser-safe LayaBox storage sessions reject lossy UAM saves before touchi
 		const opened = await runtime.openSession({ projectPath: projectRoot });
 		t.true(opened.ok);
 		if (!opened.ok) return;
-		t.is(opened.data.uamFidelity, 'unsupported');
+		t.is(opened.data.uamFidelity, 'full');
 		sessionId = opened.data.sessionId;
 		let revision = opened.data.revision;
 
@@ -2718,23 +2802,10 @@ test('browser-safe LayaBox storage sessions reject lossy UAM saves before touchi
 		t.true(appliedRename.ok);
 		if (!appliedRename.ok) return;
 		revision = appliedRename.data.revision;
-		const storageBeforeRejectedWrites = storage.snapshot();
+
 		const renamedSave = await runtime.saveSession({ sessionId, expectedRevision: revision });
-		t.false(renamedSave.ok);
-		if (!renamedSave.ok) {
-			t.is(backendFailure(renamedSave).error.code, 'uam_fidelity_unsupported');
-			t.deepEqual(storage.snapshot(), storageBeforeRejectedWrites);
-			const materialized = await runtime.materializeSession({
-				sessionId,
-				expectedRevision: revision,
-				mode: 'fullProject',
-				reason: 'issue_87_fidelity_guard',
-			});
-			t.false(materialized.ok);
-			if (!materialized.ok) t.is(backendFailure(materialized).error.code, 'uam_fidelity_unsupported');
-			t.deepEqual(storage.snapshot(), storageBeforeRejectedWrites);
-			return;
-		}
+		t.true(renamedSave.ok);
+		if (!renamedSave.ok) return;
 
 		const renamedReload = normalizeUamProject(liftDocumentToUamProject(await reader.read(fairyPath, { hydrateResourceBytes: true })));
 		const renamedImage = renamedReload.packages
@@ -3032,6 +3103,11 @@ test('materializeSession writes a clean browser-safe session without advancing e
 	t.true(materialized.data.writtenPaths.some((filePath) => filePath.endsWith('Project.fairy')));
 	t.true(storage.hasFile('Workspace/Project.fairy'));
 	t.deepEqual(materialized.meta.diagnostics, []);
+	const events = runtime.getEvents({ sessionId: opened.data.sessionId });
+	t.true(events.ok);
+	if (events.ok) {
+		t.deepEqual(events.data.events.slice(-3).map((event) => event.kind), ['save.started', 'save.completed', 'cache.updated']);
+	}
 
 	const reloaded = normalizeUamProject(liftDocumentToUamProject(await new ProjectReader(fileSystem).read('Workspace/Project.fairy')));
 	t.deepEqual(reloaded.packages.map((pkg) => pkg.id), ['pkg001']);
@@ -3396,6 +3472,169 @@ test('browser-safe clean save preserves property overrides and autoClearItems', 
 		&& reloadedInstance.instanceProperties.autoClearItems);
 });
 
+test('case-sensitive storage removes the old source after a case-only rename', async (t) => {
+	const storage = new MemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const runtime = new BackendRuntime();
+	t.true(runtime.openProjectSession({ sessionId: 'case', project: createBackendFixtureProject(), storage: { fileSystem, fairyPath: 'Case/Project.fairy' } }).ok);
+	t.true((await runtime.materializeSession({ sessionId: 'case' })).ok);
+	t.true((await runtime.applyTransaction({ sessionId: 'case', expectedRevision: 0, operations: [
+		{ kind: 'renameResource', selector: { packageId: 'pkg001', resourceId: 'cmp001' }, newName: 'mainview' },
+	] })).ok);
+	t.true((await runtime.saveSession({ sessionId: 'case', expectedRevision: 1 })).ok);
+	t.true(storage.hasFile('Case/assets/Main/mainview.xml'));
+	t.false(storage.hasFile('Case/assets/Main/MainView.xml'));
+});
+
+test('queued materialization captures its caller-owned target and revision', async (t) => {
+	const storage = new PausingMemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const runtime = new BackendRuntime();
+	t.true(runtime.openProjectSession({ sessionId: 'capture', project: createBackendFixtureProject() }).ok);
+	const first = runtime.materializeSession({ sessionId: 'capture', storage: { fileSystem, fairyPath: 'first/Project.fairy' } });
+	await storage.writeStarted;
+	const input = { sessionId: 'capture', expectedRevision: 0, storage: { fileSystem, fairyPath: 'intended/Project.fairy' } };
+	const queued = runtime.materializeSession(input);
+	input.sessionId = 'changed';
+	input.expectedRevision = 99;
+	input.storage.fairyPath = 'changed/Project.fairy';
+	storage.continueWrite();
+	t.true((await first).ok);
+	t.true((await queued).ok);
+	t.true(storage.hasFile('intended/Project.fairy'));
+	t.false(storage.hasFile('changed/Project.fairy'));
+});
+
+test('materializeSession reserves its target before another session can write', async (t) => {
+	const storage = new PausingMemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const runtime = new BackendRuntime();
+	for (const sessionId of ['first', 'second']) {
+		t.true(runtime.openProjectSession({ sessionId, project: createBackendFixtureProject() }).ok);
+	}
+	const target = { fileSystem, fairyPath: 'Project.fairy' };
+	const first = runtime.materializeSession({ sessionId: 'first', storage: target });
+	await storage.writeStarted;
+	try {
+		const attempts = storage.writeAttempts;
+		const second = await runtime.materializeSession({ sessionId: 'second', storage: target });
+		t.false(second.ok);
+		if (!second.ok) t.is(backendFailure(second).error.code, 'lock_conflict');
+		t.is(storage.writeAttempts, attempts, 'the losing session must not enter the writer');
+	} finally {
+		storage.continueWrite();
+	}
+	t.true((await first).ok);
+	t.true((await runtime.closeSession({ sessionId: 'first' })).ok);
+	t.true((await runtime.materializeSession({ sessionId: 'second', storage: target })).ok);
+});
+
+test('opening reserves the path and session id before awaiting the storage lock', async (t) => {
+	const storage = new MemoryBrowserStorage();
+	const base = createBackendStorageFileSystem(storage);
+	let continueOpen = (): void => undefined;
+	let markOpening = (): void => undefined;
+	const gate = new Promise<void>((resolve) => { continueOpen = resolve; });
+	const openingStarted = new Promise<void>((resolve) => { markOpening = resolve; });
+	let lockAttempts = 0;
+	const fileSystem = {
+		...base,
+		async acquireSessionLock(lockPath: string) {
+			lockAttempts += 1;
+			markOpening();
+			await gate;
+			return base.acquireSessionLock(lockPath);
+		},
+	};
+	const runtime = new BackendRuntime({ fileSystem });
+	const target = { fileSystem, fairyPath: 'Project.fairy' };
+	t.true(runtime.openProjectSession({ sessionId: 'seed', project: createBackendFixtureProject(), storage: target }).ok);
+	t.true((await runtime.materializeSession({ sessionId: 'seed' })).ok);
+	await runtime.closeSession({ sessionId: 'seed' });
+	t.true(runtime.openProjectSession({ sessionId: 'other', project: createBackendFixtureProject() }).ok);
+	const opening = runtime.openSession({ projectPath: 'Project.fairy' });
+	await openingStarted;
+	try {
+		const duplicate = await runtime.openSession({ projectPath: 'Project.fairy' });
+		t.false(duplicate.ok);
+		if (!duplicate.ok) {
+			const error = backendFailure(duplicate).error;
+			t.is(error.code, 'lock_conflict');
+			if (error.code === 'lock_conflict' && error.kind === 'in_process_session_exists') {
+				const idConflict = runtime.openProjectSession({ sessionId: error.holderSessionId, project: createBackendFixtureProject() });
+				t.false(idConflict.ok);
+				if (!idConflict.ok) t.is(backendFailure(idConflict).error.code, 'session_id_conflict');
+			}
+		}
+		t.is(lockAttempts, 1);
+		const before = storage.snapshot();
+		const materialized = await runtime.materializeSession({ sessionId: 'other', storage: target });
+		t.false(materialized.ok);
+		if (!materialized.ok) t.is(backendFailure(materialized).error.code, 'lock_conflict');
+		t.deepEqual(storage.snapshot(), before);
+		const bound = runtime.openProjectSession({ project: createBackendFixtureProject(), storage: target });
+		t.false(bound.ok);
+	} finally {
+		continueOpen();
+	}
+	const opened = await opening;
+	t.true(opened.ok);
+	if (opened.ok) await runtime.closeSession({ sessionId: opened.data.sessionId });
+	t.true((await runtime.materializeSession({ sessionId: 'other', storage: target })).ok);
+});
+
+test('failed storage rebinding releases the target and preserves the original binding', async (t) => {
+	const storage = new FailingMemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const runtime = new BackendRuntime();
+	const oldTarget = { fileSystem, fairyPath: 'old/Project.fairy' };
+	const newTarget = { fileSystem, fairyPath: 'new/Project.fairy' };
+	t.true(runtime.openProjectSession({ sessionId: 'first', project: createBackendFixtureProject(), storage: oldTarget }).ok);
+	t.true((await runtime.materializeSession({ sessionId: 'first' })).ok);
+	const before = runtime.getSession({ sessionId: 'first' });
+	storage.failRawWritesAt('new/Project.fairy');
+	const failed = await runtime.materializeSession({ sessionId: 'first', storage: newTarget });
+	t.false(failed.ok);
+	if (!failed.ok) t.is(backendFailure(failed).error.code, 'write_failed');
+	const after = runtime.getSession({ sessionId: 'first' });
+	if (before.ok && after.ok) t.deepEqual(after.data, before.data);
+	t.false(runtime.openProjectSession({ project: createBackendFixtureProject(), storage: oldTarget }).ok);
+	storage.failRawWritesAt('unused');
+	t.true(runtime.openProjectSession({ sessionId: 'second', project: createBackendFixtureProject() }).ok);
+	t.true((await runtime.materializeSession({ sessionId: 'second', storage: newTarget })).ok);
+	await runtime.closeSession({ sessionId: 'first' });
+	t.false(runtime.openProjectSession({ project: createBackendFixtureProject(), storage: newTarget }).ok);
+	t.true(runtime.openProjectSession({ project: createBackendFixtureProject(), storage: oldTarget }).ok);
+});
+
+test('a failed open releases its reservation and unrelated targets can write while another target is paused', async (t) => {
+	const storage = new PausingMemoryBrowserStorage();
+	const fileSystem = createBackendStorageFileSystem(storage);
+	const runtime = new BackendRuntime({ fileSystem });
+	for (const sessionId of ['first', 'second']) {
+		t.true(runtime.openProjectSession({ sessionId, project: createBackendFixtureProject() }).ok);
+	}
+	const first = runtime.materializeSession({ sessionId: 'first', storage: { fileSystem, fairyPath: 'first/Project.fairy' } });
+	await storage.writeStarted;
+	try {
+		t.true((await runtime.materializeSession({ sessionId: 'second', storage: { fileSystem, fairyPath: 'second/Project.fairy' } })).ok);
+	} finally {
+		storage.continueWrite();
+	}
+	t.true((await first).ok);
+	await runtime.closeSession({ sessionId: 'second' });
+	const acquire = fileSystem.acquireSessionLock;
+	fileSystem.acquireSessionLock = async (lockPath) => ({
+		...await acquire(lockPath),
+		async writeMetadata() { throw new Error('Injected lock metadata failure'); },
+	});
+	t.false((await runtime.openSession({ projectPath: 'second/Project.fairy' })).ok);
+	fileSystem.acquireSessionLock = acquire;
+	const reopened = await runtime.openSession({ projectPath: 'second/Project.fairy' });
+	t.true(reopened.ok);
+	if (reopened.ok) await runtime.closeSession({ sessionId: reopened.data.sessionId });
+});
+
 test('materializeSession reports stable validation diagnostics before write', async (t) => {
 	const project = createBackendFixtureProject();
 	const component = project.packages[0]?.resources.find((resource) => resource.id === 'cmp001');
@@ -3504,78 +3743,83 @@ test('applyTransaction snapshots queued operations and shared source bytes befor
 	if (resource?.kind === 'misc') t.deepEqual([...(resource.sourceBytes ?? [])], [1, 2, 3]);
 });
 
-test.serial('closeSession waits for browser image validation transaction completion', async (t) => {
-	const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
-	let releaseValidation = (): void => undefined;
-	let markValidationStarted = (): void => undefined;
-	const validationStarted = new Promise<void>((resolve) => {
-		markValidationStarted = resolve;
+for (const method of ['applyTransaction', 'preflightTransaction'] as const) {
+	test.serial(`${method}: closeSession waits for browser image validation completion`, async (t) => {
+		const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
+		let releaseValidation = (): void => undefined;
+		let markValidationStarted = (): void => undefined;
+		const validationStarted = new Promise<void>((resolve) => {
+			markValidationStarted = resolve;
+		});
+		class PausingImageWorker {
+			public onmessage: ((event: MessageEvent<{ format: 'png'; width: number; height: number }>) => void) | null = null;
+			public onerror: (() => void) | null = null;
+
+			public postMessage(): void {
+				markValidationStarted();
+				releaseValidation = () => {
+					this.onmessage?.({ data: { format: 'png', width: 1, height: 1 } } as MessageEvent<{
+						format: 'png';
+						width: number;
+						height: number;
+					}>);
+				};
+			}
+
+			public terminate(): void {}
+		}
+
+		try {
+			Object.defineProperty(globalThis, 'Worker', {
+				configurable: true,
+				value: PausingImageWorker,
+			});
+			const project = createBackendFixtureProject();
+			const image = project.packages[0]?.resources.find((resource) => resource.id === 'img001');
+			if (image?.kind !== 'image') {
+				t.fail('expected fixture image resource');
+				return;
+			}
+			image.sourceBytes = new Uint8Array([1]);
+			const runtime = new BackendRuntime();
+			const opened = runtime.openProjectSession({
+				project,
+				canonicalProjectPath: 'memory://close-during-image-validation',
+			});
+			t.true(opened.ok);
+			if (!opened.ok) return;
+
+			const applying = runtime[method]({
+				sessionId: opened.data.sessionId,
+				expectedRevision: 0,
+				operations: [
+					{
+						kind: 'replaceResourceBytes',
+						selector: { packageId: 'pkg001', resourceId: 'img001' },
+						sourceBytes: new Uint8Array([1, 2, 3, 4, 5]),
+					},
+				],
+			});
+			await validationStarted;
+			let closeSettled = false;
+			const closing = runtime.closeSession({ sessionId: opened.data.sessionId }).finally(() => {
+				closeSettled = true;
+			});
+			await Promise.resolve();
+			t.false(closeSettled);
+			releaseValidation();
+
+			const applied = await applying;
+			t.true(applied.ok);
+			if (applied.ok) {
+				if ('baseRevision' in applied.data) t.is(applied.data.baseRevision, 0);
+				else t.is(applied.data.revision, 1);
+			}
+			t.true((await closing).ok);
+			t.false(runtime.getSession({ sessionId: opened.data.sessionId }).ok);
+		} finally {
+			if (workerDescriptor) Object.defineProperty(globalThis, 'Worker', workerDescriptor);
+			else Reflect.deleteProperty(globalThis, 'Worker');
+		}
 	});
-	class PausingImageWorker {
-		public onmessage: ((event: MessageEvent<{ format: 'png'; width: number; height: number }>) => void) | null = null;
-		public onerror: (() => void) | null = null;
-
-		public postMessage(): void {
-			markValidationStarted();
-			releaseValidation = () => {
-				this.onmessage?.({ data: { format: 'png', width: 1, height: 1 } } as MessageEvent<{
-					format: 'png';
-					width: number;
-					height: number;
-				}>);
-			};
-		}
-
-		public terminate(): void {}
-	}
-
-	try {
-		Object.defineProperty(globalThis, 'Worker', {
-			configurable: true,
-			value: PausingImageWorker,
-		});
-		const project = createBackendFixtureProject();
-		const image = project.packages[0]?.resources.find((resource) => resource.id === 'img001');
-		if (image?.kind !== 'image') {
-			t.fail('expected fixture image resource');
-			return;
-		}
-		image.sourceBytes = new Uint8Array([1]);
-		const runtime = new BackendRuntime();
-		const opened = runtime.openProjectSession({
-			project,
-			canonicalProjectPath: 'memory://close-during-image-validation',
-		});
-		t.true(opened.ok);
-		if (!opened.ok) return;
-
-		const applying = runtime.applyTransaction({
-			sessionId: opened.data.sessionId,
-			expectedRevision: 0,
-			operations: [
-				{
-					kind: 'replaceResourceBytes',
-					selector: { packageId: 'pkg001', resourceId: 'img001' },
-					sourceBytes: new Uint8Array([1, 2, 3, 4, 5]),
-				},
-			],
-		});
-		await validationStarted;
-		let closeSettled = false;
-		const closing = runtime.closeSession({ sessionId: opened.data.sessionId }).finally(() => {
-			closeSettled = true;
-		});
-		await Promise.resolve();
-		t.false(closeSettled);
-		releaseValidation();
-
-		const applied = await applying;
-		t.true(applied.ok);
-		if (applied.ok) t.is(applied.data.revision, 1);
-		t.true((await closing).ok);
-		t.false(runtime.getSession({ sessionId: opened.data.sessionId }).ok);
-	} finally {
-		if (workerDescriptor) Object.defineProperty(globalThis, 'Worker', workerDescriptor);
-		else Reflect.deleteProperty(globalThis, 'Worker');
-	}
-});
+}

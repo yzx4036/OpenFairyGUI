@@ -327,7 +327,7 @@ function normalizeListItems(items: UamListItemData[] | undefined): UamListItemDa
 function normalizeStates<TValue>(states: UamGearPageState<TValue>[] | undefined): UamGearPageState<TValue>[] {
 	return (states ?? []).map((state) => ({
 		pageId: state.pageId,
-		value: state.value ?? null,
+		value: structuredClone(state.value ?? null),
 	}));
 }
 
@@ -346,6 +346,8 @@ function normalizeXYValue(value: UamXYGearValue | null | undefined): UamXYGearVa
 	return {
 		x: value.x ?? 0,
 		y: value.y ?? 0,
+		...(value.px !== undefined ? { px: value.px } : {}),
+		...(value.py !== undefined ? { py: value.py } : {}),
 	};
 }
 
@@ -421,7 +423,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeLookValue(gear.defaultValue)!,
+				defaultValue: normalizeLookValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -436,7 +438,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeXYValue(gear.defaultValue)!,
+				defaultValue: normalizeXYValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -451,7 +453,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeSizeValue(gear.defaultValue)!,
+				defaultValue: normalizeSizeValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -466,7 +468,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeColorValue(gear.defaultValue)!,
+				defaultValue: normalizeColorValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -481,7 +483,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeAnimationValue(gear.defaultValue)!,
+				defaultValue: normalizeAnimationValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -496,7 +498,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeTextValue(gear.defaultValue)!,
+				defaultValue: normalizeTextValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -511,7 +513,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeIconValue(gear.defaultValue)!,
+				defaultValue: normalizeIconValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -526,7 +528,7 @@ function normalizeGearBinding(gear: UamGearBinding): UamGearBinding {
 				name: gear.name ?? '',
 				controllerName: gear.controllerName,
 				states: normalizeStates(gear.states),
-				defaultValue: normalizeFontSizeValue(gear.defaultValue)!,
+				defaultValue: normalizeFontSizeValue(gear.defaultValue),
 				condition: gear.condition ?? '',
 				positionsInPercent: gear.positionsInPercent ?? false,
 				tween: gear.tween ?? false,
@@ -701,6 +703,9 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				...base,
 				group: node.group ?? '',
 				resource: normalizeResourceRef(node.resource),
+				...(node.controllerOverrides ? { controllerOverrides: node.controllerOverrides } : {}),
+				...(node.pageController ? { pageController: node.pageController } : {}),
+				...(node.fileName ? { fileName: node.fileName } : {}),
 				...(node.propertyOverrides?.length
 					? { propertyOverrides: node.propertyOverrides.map((property) => ({ ...property })) }
 					: {}),
@@ -857,6 +862,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				group: button.group ?? '',
 				src: button.src ?? '',
 				packageId: button.packageId ?? '',
+				...(button.pageController ? { pageController: button.pageController } : {}),
 				title: button.title ?? '',
 				icon: button.icon ?? '',
 				selectedTitle: button.selectedTitle ?? '',
@@ -878,6 +884,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				group: label.group ?? '',
 				src: label.src ?? '',
 				packageId: label.packageId ?? '',
+				...(label.pageController ? { pageController: label.pageController } : {}),
 				title: label.title ?? '',
 				icon: label.icon ?? '',
 				titleColor: label.titleColor ?? '#000000',
@@ -894,6 +901,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				group: comboBox.group ?? '',
 				src: comboBox.src ?? '',
 				packageId: comboBox.packageId ?? '',
+				...(comboBox.pageController ? { pageController: comboBox.pageController } : {}),
 				title: comboBox.title ?? '',
 				icon: comboBox.icon ?? '',
 				titleColor: comboBox.titleColor ?? '#000000',
@@ -916,6 +924,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				group: progressBar.group ?? '',
 				src: progressBar.src ?? '',
 				packageId: progressBar.packageId ?? '',
+				...(progressBar.pageController ? { pageController: progressBar.pageController } : {}),
 				titleType: progressBar.titleType ?? 0,
 				min: progressBar.min ?? 0,
 				max: progressBar.max ?? 100,
@@ -933,6 +942,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				group: slider.group ?? '',
 				src: slider.src ?? '',
 				packageId: slider.packageId ?? '',
+				...(slider.pageController ? { pageController: slider.pageController } : {}),
 				titleType: slider.titleType ?? 0,
 				min: slider.min ?? 0,
 				max: slider.max ?? 100,
@@ -948,6 +958,7 @@ function normalizeDisplayNode(node: UamDisplayNode): UamDisplayNode {
 				group: scrollBar.group ?? '',
 				src: scrollBar.src ?? '',
 				packageId: scrollBar.packageId ?? '',
+				...(scrollBar.pageController ? { pageController: scrollBar.pageController } : {}),
 				fixedGripSize: scrollBar.fixedGripSize ?? false,
 			} satisfies UamScrollBarNode;
 		}
@@ -1143,7 +1154,7 @@ function normalizeAssetResource(resource: UamAssetResource): UamAssetResource {
 		dimensions: resource.dimensions
 			? { width: resource.dimensions.width ?? 0, height: resource.dimensions.height ?? 0 }
 			: null,
-		metadata: resource.metadata ?? null,
+		metadata: structuredClone(resource.metadata ?? null),
 	};
 }
 

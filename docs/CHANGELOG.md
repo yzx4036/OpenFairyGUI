@@ -76,6 +76,20 @@
 
 - `7af7ab0` merge upstream-release v0.2.5 → test-merge；`03ef5ed` test-merge → develop。
 - fork 已含 `#86 preserve override whitespace`、`#85 XML overrides + SVG`、`#79/#78/#77/#76/#75` 等上游修复。
+- `3b468dd` merge upstream-release v0.6.3 → test-merge（2026-10-09，记录见下）。
+
+## 2026-10-09 — merge upstream-release → test-merge（v0.3.1 → v0.6.3）
+
+- **上游基线**: `3b468dd`（= 上游 main / v0.6.3 tip；含 v0.4.0、v0.5.0(-alpha.1~4)、v0.6.0、v0.6.1、v0.6.2、v0.6.3 共 85 个上游提交）
+- **冲突文件（10）**: `README.md`、`README_EN.md`、`docs/architecture-overview.md`、`docs/en/architecture-overview.md`、`docs/guide/packages.md`、`docs/en/guide/packages.md`、`docs/editor-publish-settings.md`、`docs/project-validation.md`、`packages/cli/src/commands/publish.ts`、`packages/core/src/uam/validate.ts`
+- **取舍决策（Jev 决策评审）**:
+  - 代码冲突按「本地功能 + 上游改进」并集：`cli/publish.ts` 保留 `--plugin` 加载块，同时采纳上游 `--json` / `PublishNodeResult` 输出流（合并后 `publishNode` 签名同时支持 `plugins?: LoadedPlugin[]` 与 result 返回）；`uam/validate.ts` import 区保留本地 `ProjectDiagnosticSeverity`（warning 级别与 opaque 规则），同时采纳上游 property-rules 抽取与 re-export。
+  - 架构文档：采纳上游精简重写版为基线（46K→26K），本地增量以「模块表新增 codegen 两行 + 数据流补 codegen 边」重放（Jev：策略选择 1.0 置信，上游采纳 0.96）。
+  - README 双语：保留 Y0Studio 定制段落与含 `codegen` 的包表；导航采纳上游分类表并补「协议文档 / Fork 定制」行。
+  - 发布设置：上游变量替换段与本地 Unity bytes 子文件夹小节并存；补上 `pluginsDir` 的设置文档说明（fork 增强，此前缺失的文档同步；Jev 判定为本次唯一薄弱点，已修复）。
+  - 上游删除 `backend/services/job-service.ts` 及 `runtime-jobs` 集成测试：属上游重构（`35883e8`），fork 自 v0.3.1 起对 backend services 零改动，无本地内容损失。
+- **测试同步（4 个上游新测试适配本地约定/环境）**: `republishing…` 与 `publish contexts isolate…` 的子文件夹断言、`plugins › publishNode…` 的 readdir 顶层视图、`cli inspect --json` 的 node 弃用警告环境适配（`--no-deprecation`）。
+- **验证**: `pnpm run build` ✅（`NODE_OPTIONS=--max-old-space-size=16384`）；`pnpm run lint` ✅（387 files）；`pnpm run typecheck` ✅；`pnpm run test` 失败集与合并前基线完全一致（11 项已文档化的 bytes 子文件夹断言债，非本次 merge 引入）；et-fui-codegen 14/14 ✅。
 
 ## 2026-08-13 — merge upstream-release → test-merge（v0.2.5 → v0.3.1）
 

@@ -3,8 +3,55 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getFixturePath } from '@openfairygui/test-utils';
-import { Document, liftDocumentToUamProject, materializeUamProject, PropertyType } from '../src/index.js';
+import { Document, type GLoader, type GComponent, type GTextField, liftDocumentToUamProject, materializeUamProject, PropertyType } from '../src/index.js';
 import { NodeIO } from '../src/node.js';
+import { normalizeUamProject, validateUamProject } from '../src/uam/index.js';
+
+test('component-derived page controllers survive binary decoding and UAM round trips', async (t) => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ofgui-derived-page-controller-'));
+	t.teardown(() => fs.rm(directory, { recursive: true, force: true }));
+	const doc = new Document();
+	const pkg = doc.createPackage('Pages').setId('pages001');
+	const host = doc.createComponent('Host').setId('host').setSize(100, 100);
+	pkg.addResource(host);
+	const controller = doc.createController('state');
+	controller.addPage(doc.createControllerPage('First').setId('0'));
+	host.addController(controller);
+	const children = [doc.createGButton('button'), doc.createGLabel('label'),
+		doc.createGComboBox('combo'), doc.createGProgressBar('progress'),
+		doc.createGSlider('slider'), doc.createGScrollBar('scroll')];
+	for (const [index, child] of children.entries()) {
+		host.addChild(child.setId(`n${index}`).setPageController('state'));
+	}
+	const io = new NodeIO();
+	const sourcePath = path.join(directory, 'source.bytes');
+	await io.writeBinary(doc, sourcePath);
+	const decoded = await io.readBinary(sourcePath);
+	const project = normalizeUamProject(liftDocumentToUamProject(decoded));
+	t.deepEqual(validateUamProject(project), []);
+	const resource = project.packages[0]!.resources.find((item) => item.id === 'host');
+	if (resource?.kind !== 'component') return t.fail('Missing host');
+	for (const node of resource.component.displayList) {
+		t.true('pageController' in node);
+		if ('pageController' in node) t.is(node.pageController, 'state');
+	}
+	const materialized = materializeUamProject(project);
+	const projectPath = path.join(directory, 'Pages.fairy');
+	await io.writeProject(materialized, projectPath);
+	const projectRead = await io.readProject(projectPath);
+	for (const child of projectRead.getRoot().listPackages()[0]!.listComponents()[0]!.listChildren()) {
+		t.is((child as GComponent).getPageController(), 'state', `${child.getName()} XML`);
+	}
+	const outputPath = path.join(directory, 'output.bytes');
+	await io.writeBinary(materialized, outputPath);
+	const reread = await io.readBinary(outputPath);
+	const roundTrip = reread.getRoot().listPackages()[0]!.listComponents()[0]!;
+	for (const child of roundTrip.listChildren()) {
+		t.is((child as GComponent).getPageController(), 'state', child.getName());
+	}
+	Object.assign(resource.component.displayList[0]!, { pageController: 'missing' });
+	t.true(validateUamProject(project).some((issue) => issue.path.endsWith('.pageController')));
+});
 
 const BASICS_FUI = getFixturePath(
 	'FairyGUI-unity',
@@ -14,6 +61,71 @@ const BASICS_FUI = getFixturePath(
 	'UI',
 	'Basics_fui.bytes',
 );
+
+test('binary encoding context is per-call and standalone writes preserve source IDs and binary file metadata', async (t) => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ofgui-binary-context-'));
+	t.teardown(() => fs.rm(directory, { recursive: true, force: true }));
+	const doc = new Document();
+	doc.getRoot().addBranch('mobile');
+	const pkg = doc.createPackage('Context').setId('ctxpkg01').setBranchNames(['mobile']);
+	const main = doc.createComponent('Panel').setId('base').setSize(100, 100);
+	const variant = doc.createComponent('Panel').setId('variant').setBranch('mobile').setSize(200, 200);
+	variant.addChild(doc.createGLoader('local').setId('n0').setUrl('ui://ctxpkg01variant'));
+	variant.addChild(doc.createGComponent('instance').setId('n1').setSrc('variant'));
+	variant.addChild(doc.createGTextField('text').setId('n2').setText('[img]ui://ctxpkg01variant[/img]'));
+	const resource = doc.createMiscResource('data').setId('data').setFile('source.dat');
+	resource.setExtras({ _publishedFile: 'original.dat', sourceNote: 'retained' });
+	pkg.addResource(main).addResource(variant).addResource(resource);
+	const io = new NodeIO();
+	const selectedPath = path.join(directory, 'selected.bytes');
+	await io.writeBinary(doc, selectedPath, { packageContext: {
+		publishedResourceIds: new Set(['variant', 'data']),
+		effectiveResourceIds: new Map([['variant', 'base']]),
+		publishedFiles: new Map([['data', 'selected.dat']]),
+		includeBranches: false,
+	} });
+	const selected = (await io.readBinary(selectedPath)).getRoot().listPackages()[0]!;
+	t.deepEqual(selected.listResources().map((item) => item.getId()).sort(), ['base', 'data']);
+	t.deepEqual(selected.listBranchNames(), []);
+	const selectedComponent = selected.listComponents()[0]!;
+	t.is(selectedComponent.getWidth(), 200);
+	const children = selectedComponent.listChildren();
+	t.is(children.find((child): child is GLoader => child.propertyType === 'GLoader')?.getUrl(), 'ui://ctxpkg01base');
+	t.is(children.find((child): child is GComponent => child.propertyType === 'GComponent')?.getSrc(), 'base');
+	t.is(children.find((child): child is GTextField => child.propertyType === 'GTextField')?.getText(), '[img]ui://ctxpkg01base[/img]');
+	t.is(readPackageItems(await fs.readFile(selectedPath)).find((item) => item.id === 'data')?.file, 'selected.dat');
+
+	const standalonePath = path.join(directory, 'standalone.bytes');
+	await io.writeBinary(doc, standalonePath);
+	const standalone = (await io.readBinary(standalonePath)).getRoot().listPackages()[0]!;
+	t.deepEqual(standalone.listResources().map((item) => item.getId()).sort(), ['base', 'data', 'variant']);
+	t.deepEqual(standalone.listBranchNames(), ['mobile']);
+	t.is(readPackageItems(await fs.readFile(standalonePath)).find((item) => item.id === 'data')?.file, 'original.dat');
+	t.deepEqual(resource.getExtras(), { _publishedFile: 'original.dat', sourceNote: 'retained' });
+	t.deepEqual(pkg.getExtras(), {});
+	t.deepEqual(variant.getExtras(), {});
+});
+
+test('truncated binary views reject identically regardless of bytes beyond the view', async (t) => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ofgui-binary-view-'));
+	t.teardown(() => fs.rm(directory, { recursive: true, force: true }));
+	const doc = new Document();
+	const pkg = doc.createPackage('Bounds').setId('bounds');
+	const comp = doc.createComponent('Panel').setId('panel');
+	comp.addChild(doc.createGTextField('text').setId('text').setText('KEEP THIS TEXT'));
+	pkg.addResource(comp);
+	const target = path.join(directory, 'Bounds.bytes');
+	await new NodeIO().writeBinary(doc, target);
+	const bytes = new Uint8Array(await fs.readFile(target));
+	for (const raw of [bytes.subarray(0, -1), bytes.slice(0, -1)]) {
+		class ViewIO extends NodeIO {
+			protected override createFileSystem() {
+				return { ...super.createFileSystem(), readFileRaw: async () => raw };
+			}
+		}
+		await t.throwsAsync(new ViewIO().readBinary(target), { instanceOf: RangeError });
+	}
+});
 
 function readUtfString(bytes: Uint8Array, state: { pos: number }): string {
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -2524,6 +2636,90 @@ test('binary writer: list and tree child blocks round-trip into formal list prop
 				isFolder: false,
 			},
 		]);
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('binary writer: relations retain their targets when ordinary groups are omitted', async (t) => {
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-group-relations-'));
+	try {
+		for (const groupIndex of [-1, 0, 1, 3]) {
+			const doc = new Document();
+			const pkg = doc.createPackage('Relations').setId('relation');
+			const comp = doc.createComponent('Host').setId('host').setSize(100, 100);
+			const children = ['a', 'b', 'c'].map((id) => doc.createGGraph(id).setId(id));
+			const group = doc.createGGroup('ordinary').setId('group').setAdvanced(false);
+			for (let index = 0; index <= children.length; index++) {
+				if (index === groupIndex) comp.addChild(group);
+				if (children[index]) comp.addChild(children[index]);
+			}
+			const relations = children.map((child) => ({ target: child.getId(), type: 0, usePercent: false }));
+			comp.setRelations(relations);
+			children[0].setRelations(relations.slice(1));
+			pkg.addResource(comp);
+
+			const outPath = path.join(tmpDir, `group-${groupIndex}.fui`);
+			await io.writeBinary(doc, outPath);
+			const decoded = (await io.readBinary(outPath)).getRoot().getPackage('Relations')!.getComponent('Host')!;
+			t.deepEqual(decoded.listChildren().map((child) => child.getId()), ['a', 'b', 'c']);
+			t.deepEqual(decoded.getRelations(), relations, `root relations with group at ${groupIndex}`);
+			t.deepEqual(decoded.listChildren()[0].getRelations(), relations.slice(1), `child relations with group at ${groupIndex}`);
+		}
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('binary writer: transition and size gear zeros survive while omitted values keep defaults', async (t) => {
+	const doc = new Document();
+	const pkg = doc.createPackage('ZeroValues').setId('zeropkg1');
+	const comp = doc.createComponent('Host').setId('host').setSize(100, 100);
+	pkg.addResource(comp);
+	const child = doc.createGGraph('shape').setId('shape');
+	comp.addChild(child);
+	const controller = doc.createController('state');
+	for (const id of ['zero', 'omitted', 'empty']) controller.addPage(doc.createControllerPage(id).setId(id));
+	comp.addController(controller);
+	child.addGear(doc.createGear('size')
+		.setGearType(2).setController(controller).setPages('zero,omitted,empty')
+		.setValues('10,20,0,0|10,20|10,20,,').setDefaultValue('30,40,0,0'));
+	const transition = doc.createTransition('main');
+	transition.addItem(doc.createTransitionItem('scale').setLabel('scale').setActionType(2)
+		.setTargetId('shape').setTween(true).setDuration(1).setStartValue(['0', '0']).setEndValue([]));
+	for (const [name, type, value] of [
+		['silent', 9, ['ui://zeropkg1sound', '0']],
+		['defaultSound', 9, ['ui://zeropkg1sound']],
+		['emptySound', 9, ['ui://zeropkg1sound', '']],
+		['stop', 10, ['nested', '0']],
+		['defaultPlay', 10, ['nested']],
+		['emptyPlay', 10, ['nested', '']],
+	] as const) {
+		transition.addItem(doc.createTransitionItem(name).setLabel(name).setActionType(type).setStartValue([...value]));
+	}
+	comp.addTransition(transition);
+	comp.addTransition(doc.createTransition('nested'));
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-binary-zero-'));
+	try {
+		const outPath = path.join(tmpDir, 'zeros.fui');
+		await io.writeBinary(doc, outPath);
+		const decoded = (await io.readBinary(outPath)).getRoot().getPackage('ZeroValues')!.getComponent('Host')!;
+		const items = decoded.listTransitions()[0].listItems();
+		t.deepEqual(items.map((item) => [item.getLabel(), item.getStartValue()]), [
+			['scale', ['0', '0']],
+			['silent', ['ui://zeropkg1sound', '0']],
+			['defaultSound', ['ui://zeropkg1sound', '100']],
+			['emptySound', ['ui://zeropkg1sound', '100']],
+			['stop', ['nested', '0']],
+			['defaultPlay', ['nested', '1']],
+			['emptyPlay', ['nested', '1']],
+		]);
+		t.deepEqual(items[0].getEndValue(), ['1', '1']);
+		const gear = decoded.listChildren()[0].listGears()[0];
+		t.is(gear.getValues(), '10,20,0,0|10,20,1,1|10,20,1,1');
+		t.is(gear.getDefaultValue(), '30,40,0,0');
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}

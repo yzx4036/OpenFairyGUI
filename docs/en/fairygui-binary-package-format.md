@@ -97,6 +97,8 @@ Offsets appear in this order:
 
 ## String table
 
+Length-prefixed strings, sub-buffers and block offsets must remain within their containing buffer. A string-table index must identify an existing entry or a protocol-defined null/empty sentinel; an out-of-range index is not an empty string.
+
 ### Block 4
 
 | Content | Protocol |
@@ -161,6 +163,8 @@ Every package item writes this common header before its type-specific segment:
 | `height` | Resource height |
 
 The `Font` glyph-data block stores its UTF-16 code unit (`charId`) as `uint16`, covering the complete BMP range. Image references and glyph metrics then use their respective string-table indices and `int32` fields.
+
+Bitmap glyph image references must resolve in the same package's resource and sprite tables. A whole-font texture is addressed by the font ID in the sprite table. After branch merging, glyph image IDs refer to merged resources. Imported TTF/TTC/OTF fonts use their engine font name in text `font` fields and are not encoded as bitmap `Font` resources.
 
 ### `Spine` / `DragoneBones` item segment
 
@@ -300,6 +304,8 @@ Required decode order:
 | Overflow | `Visible` / `Hidden` / `Scroll` |
 | Clip softness | `x`, `y` |
 
+The component-header and child pivot presence flag is set when either coordinate is nonzero or `pivotAsAnchor=true`; `(0,0,true)` differs from an absent pivot.
+
 #### Block 1: Controllers
 
 Every controller has its own three-block index table:
@@ -355,6 +361,8 @@ This block stores the child list:
 |---|---|
 | Target | Resolved by child index first |
 | Relation pairs | Each target has multiple relation-type and `usePercent` pairs |
+
+Component-root and child relation targets use indexes into the same published child list. Ordinary Groups (`advanced=false`) occupy no slot; advanced Groups retain their slots. A parent target uses `-1`.
 
 #### Block 4: Advanced properties
 
@@ -547,6 +555,12 @@ This preserves hierarchy semantics for leaf nodes without icons or URLs. Icons a
 | Tween | Ease, duration, delay, and custom-ease path |
 | Extended state | Conditional fields such as GearXY percentages and GearAnimation extended state |
 
+Each child has one slot per Gear type, regardless of its controller binding; Display and Display2 are separate types. The XY percentage extension stores floating-point `px/py` coordinates relative to the parent size (`0.5` means 50%). Size scales and Look alpha may be `0`.
+
+XY, Size, Look, Color, Animation, FontSize, Text, and Icon store the presence of a default state in a separate Boolean. Without that payload, the runtime retains the default captured from the owner's initial properties. Unconfigured pages return to that state instead of a fixed zero size, white color, or font size.
+
+For Text/Icon, empty strings, `-`, and strings containing `|` are complete state values. A null page carries no state payload. A separate Boolean records default-value presence, distinguishing an absent default override from an explicit empty string.
+
 #### Transition
 
 | Content | Requirement |
@@ -555,6 +569,8 @@ This preserves hierarchy semantics for leaf nodes without icons or URLs. Icons a
 | Tween | `duration`, `easeType`, `repeat`, `yoyo`, `endLabel` |
 | Value | `value` / `startValue` / `endValue` |
 | Path | `path`, custom-ease path |
+
+Scale `0` is a valid scale. Sound volume `0` means silence, and a nested Transition play count of `0` means stop; these values are not replaced by defaults.
 
 #### ScrollPane
 

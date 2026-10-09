@@ -8,6 +8,27 @@ import { NodeIO } from '../src/node.js';
 
 const PROJECT_PATH = getFixtureProjectPath('FairyGUI-unity', 'UIProject/FairyGUI-Unity-Examples.fairy');
 
+test('zero pivot retains anchor semantics on component roots and display children', async (t) => {
+	const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ofgui-zero-pivot-'));
+	t.teardown(() => fs.rm(directory, { recursive: true, force: true }));
+	const doc = new Document();
+	const pkg = doc.createPackage('Pivot').setId('pivot');
+	const comp = doc.createComponent('Panel').setId('panel').setPivotAsAnchor(true);
+	comp.addChild(doc.createGGraph('shape').setId('shape').setPivot(0, 0, true));
+	pkg.addResource(comp);
+	const io = new NodeIO();
+	const target = path.join(directory, 'Pivot.fairy');
+	await io.writeProject(doc, target);
+	const restored = (await io.readProject(target)).getRoot().listPackages()[0]!.listComponents()[0]!;
+	t.true(restored.getPivotAsAnchor());
+	t.true(restored.listChildren()[0]!.getPivotAsAnchor());
+	const binaryPath = path.join(directory, 'Pivot.bytes');
+	await io.writeBinary(doc, binaryPath);
+	const binaryComponent = (await io.readBinary(binaryPath)).getRoot().listPackages()[0]!.listComponents()[0]!;
+	t.true(binaryComponent.getPivotAsAnchor());
+	t.true(binaryComponent.listChildren()[0]!.getPivotAsAnchor());
+});
+
 // ─── Round-trip: read → write → read ──────────────────────────────────────
 
 test('round-trip: component scrollpane/mask/hittest and image fill attrs survive write→read', async (t) => {
@@ -579,7 +600,7 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 		t.true(componentXml.includes('strokeColor="#ffffff"'), 'richtext writes canonical strokeColor attr');
 		t.true(componentXml.includes('shadowColor="#000000"'), 'text shadowColor attrs are normalized to lowercase');
 		t.true(componentXml.includes('shadowOffset="1,2"'), 'richtext writes canonical shadowOffset attr');
-		t.true(/<richtext\b[^>]*rotation="30"[^>]*alpha="0.55"[^>]*touchable="false"[^>]*grayed(?:="true")?/.test(componentXml), 'richtext writes canonical common display attrs');
+		t.true(/<richtext\b(?=[^>]*rotation="30")(?=[^>]*alpha="0.55")(?=[^>]*touchable="false")(?=[^>]*grayed="true")/.test(componentXml), 'richtext writes canonical common display attrs');
 		t.true(componentXml.includes('animation="idle"'), 'loader3D uses canonical animation attr');
 		t.false(componentXml.includes('animationName='), 'loader3D no longer writes model field name');
 		t.false(/<loader3d\b[^>]*\balign=/.test(componentXml), 'loader3D omits default align attr');
@@ -587,7 +608,7 @@ test('writer: uses canonical XML attr names for component root, loader, text nod
 		t.true(componentXml.includes('prompt="Search here"'), 'text input uses canonical prompt attr');
 		t.true(/<inputtext\b[^>]*text=""[^>]*color="#ff3300"/.test(componentXml), 'text input preserves explicit empty text and lowercases color attrs');
 		t.true(/<inputtext\b[^>]*autoClearText(?:="true")?/.test(componentXml), 'text input writes canonical autoClearText attr');
-		t.true(/<inputtext\b[^>]*rotation="15"[^>]*alpha="0.65"[^>]*touchable="false"[^>]*grayed(?:="true")?/.test(componentXml), 'text input writes canonical common display attrs');
+		t.true(/<inputtext\b(?=[^>]*rotation="15")(?=[^>]*alpha="0.65")(?=[^>]*touchable="false")(?=[^>]*grayed="true")/.test(componentXml), 'text input writes canonical common display attrs');
 		t.false(componentXml.includes('promptText='), 'text input no longer writes model field name');
 		t.true(componentXml.includes('colGap="5"'), 'group uses canonical colGap attr');
 		t.true(/<group\b[^>]*layout="hz"/.test(componentXml), 'group uses editor layout attr values');

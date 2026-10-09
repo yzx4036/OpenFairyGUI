@@ -142,6 +142,24 @@ Integer geometry fields include:
 
 `pivot`, `scale`, `skew`, percentage values in `gearXY`, and scale values in `gearSize` continue to preserve decimals.
 
+Component roots and display tags supporting pivots preserve `pivot="0,0"` when `anchor="true"`; zero coordinates do not cancel anchor semantics. `.fairy` writing preserves all 13 formal project types from `Unity` through `Vision`, rejecting unknown types before writing.
+
+UAM XY Gear states and defaults use `x/y` and optional `px/py`. Enabling `positionsInPercent` requires paired finite `px/py` coordinates in explicit values; `0.5` means 50%. A `null` default means no default override and remains omitted on save. Each display node allows one binding per Gear type. Rebind a controller by removing the gear and adding it again; Display and Display2 may coexist.
+
+Text/Icon Gear page values preserve absent overrides, empty strings, and literal `-` text. Defaults also distinguish an absent override from explicit clearing. Project XML separates page `values` with `|`; no verified official lossless representation is available for a page value containing `|`, so ProjectWriter rejects that output before any write. A default containing `|` has no such delimiter restriction; UAM, Document, and binary retain complete strings.
+
+Size, Look, Color, Animation, and FontSize gears also use `defaultValue: null` for an absent override, without substituting a fixed state. XML `delay` is preserved as `tweenDelay`; disabling tweening still preserves non-default ease, duration, and delay. A component instance's `controller` attribute is retained in the formal UAM `controllerOverrides` field, including controller and page selections.
+
+The published resource closure includes component-root `showSound` / `hideSound`: referenced unexported sounds in the same package are published with the component, and sounds in other packages create package dependencies.
+
+A component instance's `fileName` is an editor file hint preserved through project round trips; `src` and optional `pkg` still identify the target. An absent hint remains omitted.
+
+A component instance's `pageController` names the parent component's controller driving its paged scrolling. Round trips preserve this name and omit an absent binding. UAM validation rejects non-string values and missing parent controllers. Component-derived button, label, combo box, progress bar, slider and scroll bar instances also preserve this field through decoded-binary UAM round trips and project writing.
+
+`gearColor` states and defaults are written as a single color when no outline color is configured. An explicitly empty second field is also normalized to a single color. Configured outline colors and `-` states without an override retain their meaning.
+
+`gearAni` writing omits trailing empty animation and skin names, retaining the frame, play state and non-trailing empty fields. Missing `gearSize` scaleX/scaleY values both mean 1; writing fills them when explicit scale fields are needed and omits identity scales otherwise. These rules apply to states and defaults on both the original project and UAM round-trip paths. Unset `-` states and absent default overrides remain unchanged.
+
 ## Project resource-tree metadata
 
 Component and asset resource nodes in `package.xml` and `package_branch.xml` use `exported="true"` and `favorite="true"` to store export and favorite state. The corresponding attribute is omitted when disabled. SWF uses the formal `SwfResource` model for `<swf>` nodes, and the UAM `swf` resource preserves its source file, export state, and favorite state. UAM stores these values as `resource.exported` and `resource.favorite`; public transactions set the target Boolean idempotently through `setResourceExported` and `setResourceFavorite`.
@@ -151,6 +169,8 @@ Each package records its own resource branches in the formal ordered `branchName
 The public `addBranch`, `renameBranch`, and `removeBranch` transactions maintain the project branch registry sorted by name. Rename atomically updates resources, resource folders, and package-local branch tables while preserving each package's existing slot positions. Removal is allowed only for an empty branch with no variant-ID mapping. A branch name must be a safe, non-reserved single path segment. The branch currently active in the editor is local UI state and is not changed by these project transactions.
 
 ProjectWriter preserves `assets_<branch>/` for every project branch and writes an empty `package_branch.xml` for each empty package-local branch slot. Empty branches and package-local branch subsets therefore survive a ProjectReader reload. After a rename or removal is saved successfully, only the removed controlled branch directories are cleaned up with non-recursive directory deletion.
+
+Stale-file and directory cleanup uses the storage adapter's existing-path identities. Case aliases resolving to a current output are retained, while case-sensitive storage still distinguishes separate files. All image ordering hints are checked before the first file write: missing, cross-package, cross-branch and cyclic anchors reject writing.
 
 Resource folders are formally represented by `package.folders` with `branch / path / favorite / atlas`. Folder paths use canonical leading and trailing `/`, and the root is implicit. Actual `assets[/_<branch>]/<package-name>/` directories are the source of truth for existence; `<folder>` nodes store only favorite or atlas metadata that needs persistence. `setResourceFolderFavorite` updates a known folder in the main branch or a resource branch, and one operation changes only the selected folder. To match editor behavior that favorites descendants, callers should explicitly submit favorite operations for descendant folders and resources in the same transaction. Public `addResourceFolder`, `renameResourceFolder`, `moveResourceFolder`, and `removeResourceFolder` transactions operate only on empty folders. The parent must exist, and root, path conflicts, or non-empty operations are rejected before commit. Browser storage adapters must provide non-recursive `rmdir`; removed empty directories are cleaned up only after a successful save.
 
@@ -184,9 +204,15 @@ An explicitly supplied output directory takes priority over settings. Without on
 
 The selected relative path resolves against the project root. If none is configured, publishing does not implicitly choose an output directory.
 
+Project and package `path` / `branchPath` first replace `{publish_file_name}` with the publish name without its extension, then replace `{name}` in `CustomProperties.json` property order before resolving relative paths. Unknown variables remain literal; explicit `output` is used directly as the caller's path. Project and package `codePath` also expand custom variables.
+
 Browser Laya publishing never uses project or package desktop output paths beneath an explicit `output`. Explicit `branch`, `packages`, `compressed`, and `atlas` parameters also remain authoritative. Without an explicit override, persisted compression, atlas, and safe file-extension settings directly drive output. The current browser host does not provide code generation. If global settings allow it and any selected package enables `genCode`, publishing rejects with `unsupported_publish_setting`, including `setting` and `path`, before Canvas checks or file writes. On failure, `files` contains only files whose `writeFileRaw` completed. Therefore, `success=false` with a non-empty list means built-in output was written partially; hosts requiring atomic publication must provide a transactional or staging output filesystem.
 
 ## Current publish completeness requirements
+
+Bitmap fonts load their branch's `.fnt` before resource selection. Texture and glyph images form the publication dependency closure, including images not explicitly exported; merged branches remap glyph references to published IDs. Fonts in `assets_<branch>` do not read the main branch's same-named `.fnt`. TTF/TTC/OTF resources are engine fonts: text stores the font resource name, without an empty bitmap Font item or a package dependency caused by that font URL.
+
+Republishing the same Document replaces old Atlas/Sprite nodes after successful generation and retains the previous complete atlas model on generation failure. The publication set is recomputed from export flags and dependencies; previously generated sprites do not become new publication inputs.
 
 These are OpenFairyGUI's current execution boundaries, not new editor setting fields:
 
@@ -217,6 +243,8 @@ OpenFairyGUI has integrated code generation into the existing `publish` workflow
 | Other project types | Currently unimplemented; generation is skipped |
 
 The current formal code-generation contract is:
+
+Chinese characters in package, component, and member names become character-by-character pinyin; ASCII names retain the existing case rules, and polyphonic characters use the dictionary's default reading. Components receive names in ID order. Class names that collide within a package, including case-only collisions or the Binder name, receive `_2`, `_3`, and further suffixes. Member collisions also receive unique suffixes. Referenced types, filenames, and the Binder share the same final class names.
 
 | Lane | Output item | Current behavior |
 |---|---|---|
@@ -364,6 +392,12 @@ When the editor writes `Publish.json`, current rules include:
 | `compressPNG` / `jpegQuality` | Written only for projects that do not support atlases |
 
 ## Project write-back boundary
+
+Component XML round-trips preserve supported attribute values and ordered child nodes without promising the source text's attribute arrangement. Attribute order carries no semantics; Gear, relation, extension overrides and list items still follow their respective child-order rules.
+
+Restored images may omit `width` and `height` in `package.xml` so dimensions inferred from published resources are not presented as original declarations. Image reconstruction retains usable dimensions. This omission does not change write-back of declared dimensions in ordinary projects.
+
+Generated font textures and glyph images follow their font within the same package and branch, with textures before glyphs and resource-ID ordering within each group. This does not change resource IDs, references or image contents.
 
 Publish settings do not change the authoring-property semantics of `component.xml`. Project I/O independently preserves component root properties, root-component `customProperty` definitions, and `Button`, `Label`, `ComboBox`, `ProgressBar`, `Slider`, and `ScrollBar` instance-extension overrides on component references. See [Project XML Attribute Protocol](./project-xml-attribute-reference.md) for the corresponding XML contract.
 

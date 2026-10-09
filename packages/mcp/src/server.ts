@@ -1,9 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createNodeBackendRuntime } from '@openfairygui/backend/node';
 import { createRequire } from 'node:module';
+import { z } from 'zod';
 import { registerOpenFairyGuiBackendPrompts } from './prompt-definitions.js';
 import { registerOpenFairyGuiBackendResources } from './resource-definitions.js';
-import { callOpenFairyGuiBackendTool, type OpenFairyGuiBackendRuntime } from './tool-handler.js';
+import { compactToolSchema, CONTRACT_SNAPSHOT } from './contract-schema.js';
+import { callOpenFairyGuiBackendTool, type OpenFairyGuiBackendRuntime, type OpenFairyGuiMcpToolPolicy } from './tool-handler.js';
 import {
 	OPENFAIRYGUI_BACKEND_TOOL_DEFINITIONS,
 	type OpenFairyGuiBackendToolName,
@@ -39,32 +41,49 @@ export interface CreateOpenFairyGuiMcpServerOptions {
 	allowedProjectRoots?: readonly string[];
 	name?: string;
 	version?: string;
+	/** Host guidance returned by the SDK initialize handshake. */
+	instructions?: string;
+	/** Per-tool Host failures do not change the canonical Backend contracts. */
+	toolPolicies?: Partial<Record<OpenFairyGuiBackendToolName, OpenFairyGuiMcpToolPolicy>>;
 }
 
 export function createOpenFairyGuiMcpServer(options: CreateOpenFairyGuiMcpServerOptions = {}): McpServer {
+	for (const name of Object.keys(options.toolPolicies ?? {})) {
+		if (!OPENFAIRYGUI_BACKEND_TOOL_DEFINITIONS.some((definition) => definition.name === name)) {
+			throw new RangeError(`Unknown OpenFairyGUI backend MCP tool policy: ${name}`);
+		}
+	}
 	const runtime = options.runtime ?? createNodeBackendRuntime({
 		allowedProjectRoots: options.allowedProjectRoots ?? [process.cwd()],
 	});
 	const server = new McpServer({
 		name: options.name ?? 'openfairygui-mcp',
 		version: options.version ?? PACKAGE_VERSION,
-	});
+	}, { instructions: options.instructions });
 
 	for (const definition of OPENFAIRYGUI_BACKEND_TOOL_DEFINITIONS) {
+		const policy = options.toolPolicies?.[definition.name];
+		const outputSchema = policy ? definition.outputSchema.extend({
+			backendResult: z.union([definition.outputSchema.shape.backendResult, policy.failureSchema]),
+		}) : definition.outputSchema;
+		const metadata = {
+			name: definition.name, title: definition.title, description: definition.description,
+			annotations: definition.annotations,
+			_meta: {
+				'openfairygui/backendMethod': definition.backendMethod,
+				'openfairygui/adapter': 'thin-backend-p2',
+				'openfairygui/contractDigest': CONTRACT_SNAPSHOT.digest,
+				...(policy ? { 'openfairygui/hostPolicy': true } : {}),
+			},
+		};
 		server.registerTool(
 			definition.name,
 			{
-				title: definition.title,
-				description: definition.description,
-				inputSchema: definition.inputSchema,
-				outputSchema: definition.outputSchema,
-				annotations: definition.annotations,
-				_meta: {
-					'openfairygui/backendMethod': definition.backendMethod,
-					'openfairygui/adapter': 'thin-backend-p2',
-				},
+				...metadata,
+				inputSchema: compactToolSchema(definition.inputSchema, 'input'),
+				outputSchema: compactToolSchema(outputSchema, 'output'),
 			},
-			async (args: Record<string, unknown>) => callOpenFairyGuiBackendTool(runtime, definition.name as OpenFairyGuiBackendToolName, args),
+			async (args: Record<string, unknown>) => callOpenFairyGuiBackendTool(runtime, definition.name, args, policy),
 		);
 	}
 

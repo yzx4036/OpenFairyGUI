@@ -82,7 +82,8 @@ console.log('  ✅ PASSED');
 console.log('[5/7] templates.ts — entity + system');
 const entity = await renderPanelEntity(mock, 'ET.Client');
 contains(entity, 'class LoginPanel : Entity, IAwake', 'entity class');
-contains(entity, 'public FUI_LoginPanel View;', 'View field');
+contains(entity, 'public FUI_LoginPanel View', 'View accessor');
+contains(entity, 'GetParent<FUIEntity>()?.GComponent', 'View getter wiring');
 contains(entity, '[ComponentOf(typeof(FUIEntity))]', 'ComponentOf attr');
 
 const sys = await renderPanelSystem(mock, 'ET.Client');

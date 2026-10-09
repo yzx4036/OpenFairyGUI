@@ -141,6 +141,12 @@
 - **背景**: `deploy-docs` 工作流自 fork 建立以来持续失败（Pages 未开通，`configure-pages` 报 "Get Pages site failed"）；开通后首次部署暴露基路径缺陷——上游工作流按自有域名 `fairygui.dev` 根路径部署（commit `6ca28c8`），fork 部署在工程页时页面引用 `/assets/...` 全部 404。
 - **验证**: 本地 `VITEPRESS_BASE=/OpenFairyGUI/ pnpm docs:build` 产物引用 `/OpenFairyGUI/assets/...` ✅、`og:image` 指向 fork 站点 ✅；线上部署 run 与站点资源探活随本次推送核验。
 
+## 2026-10-09 — fork 发布 `y0-v0.2.2`（GitHub Pages 文档站）
+
+- **tag**: `y0-v0.2.2`（annotated，指向发布时 main HEAD）
+- **内容快照**: `y0-v0.2.1` 全量内容 + GitHub Pages 文档站开通与 fork 基路径适配（`9c38e90`、`01a0b0d`，见上节）；issue #1「生成代码区域标记 + 正则局部替换（保护手写业务代码）」闭环关闭（实现提交 `575ade8`/`e176abe`/`671254d`，验收证据见 issue 关闭说明）。
+- **验证**: 文档站部署 run `37907788332` 绿（57s）；站点 `https://yzx4036.github.io/OpenFairyGUI/` 200、页面引用资源逐项 200、`og:image` 指向 fork 站点；全量门沿用 `y0-v0.2.1` 结论（648 全绿、验收矩阵 18/18）；CI（main push）与 Deploy docs 工作流随本次推送实跑核验。
+
 ## 2026-08-13 — merge upstream-release → test-merge（v0.2.5 → v0.3.1）
 
 - **上游基线**: `8a8946a`（含 v0.2.6、v0.3.0、v0.3.1：协议类型完整覆盖、SWF 资源保留、项目值校验、发布信任边界加固、backend 路径策略、atomic save/stale lock 恢复等 44 个提交）

@@ -40,7 +40,7 @@
     },
     {
       "paths": ["docs/.vitepress/**", "scripts/**", "examples/**", "agent/**", "references.json", ".github/**", ".node-version"],
-      "tests": ["core", "functions", "backend", "cli", "mcp"],
+      "tests": ["core", "functions", "backend", "cli", "mcp", "codegen"],
       "docs": ["docs/guide/development.md", "docs/en/guide/development.md"]
     },
     {

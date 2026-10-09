@@ -134,6 +134,13 @@
 - typecheck / lint / build / **全量测试 648 全绿（含默认堆复跑）** / `test:repo` / `docs:check` / 插件测试 ×2 / smoke-test / verify-fgui（87 个 C# 文件）/ smoke-projzero / codegen-preserve（覆盖区域生成 live：标记区内替换 + 区外保留 + System preserve + 绑定 overwrite）/ 导入导出 live 往返（13 个 bytes 子文件夹产物 → 恢复 70 个 XML）/ `eval:agent` 10/10（拼UI / 改UI / 发布 / 恢复 / 安全停止）。
 - **已知限制（非阻断）**: 携带 FairyGUI 编辑器 Lua 插件的工程需 `PublishSettings.pluginsDir` 配置或排除 `plugins/` 副本后经 CLI 发布。
 
+## 2026-10-09 — GitHub Pages 文档站开通（fork 基路径适配）
+
+- **提交**: `9c38e90`（工作流适配）
+- **动作**: ① 仓库 Pages 开通（Source = GitHub Actions，站点 `https://yzx4036.github.io/OpenFairyGUI/`，HTTPS 强制）；② `deploy-docs.yml` 构建环境 `VITEPRESS_BASE: /` → `/OpenFairyGUI/`、`VITEPRESS_SITE_URL` → fork 站点 URL。
+- **背景**: `deploy-docs` 工作流自 fork 建立以来持续失败（Pages 未开通，`configure-pages` 报 "Get Pages site failed"）；开通后首次部署暴露基路径缺陷——上游工作流按自有域名 `fairygui.dev` 根路径部署（commit `6ca28c8`），fork 部署在工程页时页面引用 `/assets/...` 全部 404。
+- **验证**: 本地 `VITEPRESS_BASE=/OpenFairyGUI/ pnpm docs:build` 产物引用 `/OpenFairyGUI/assets/...` ✅、`og:image` 指向 fork 站点 ✅；线上部署 run 与站点资源探活随本次推送核验。
+
 ## 2026-08-13 — merge upstream-release → test-merge（v0.2.5 → v0.3.1）
 
 - **上游基线**: `8a8946a`（含 v0.2.6、v0.3.0、v0.3.1：协议类型完整覆盖、SWF 资源保留、项目值校验、发布信任边界加固、backend 路径策略、atomic save/stale lock 恢复等 44 个提交）

@@ -771,6 +771,14 @@ URI: `openfairygui://docs/diagnostics/unsafe_path`
 
 Ask the host to review the attempted path and authorized project root. saveSession only writes the original project; it is not Save As. Do not widen allowed roots or bypass path checks. A separately authorized export may use materializeSession.
 
+### top_view_opaque_blocks_touches
+
+Owners: `core.validation` · Recovery: `host-action`
+
+URI: `openfairygui://docs/diagnostics/top_view_opaque_blocks_touches`
+
+Inspect the flagged Top-layer view: while opaque (the default), touches that miss its children land on the view and never reach lower layers. Passive overlays (HUD, banners, toasts) must set opaque="false" and keep decorative children touchable="false", then publish the package again; overlays that intentionally intercept touches (modals, onboarding) can ignore this warning. This diagnostic stays a warning: validation status and exit codes are unchanged.
+
 ### capability_unavailable
 
 Owners: `backend` · Recovery: `host-action`

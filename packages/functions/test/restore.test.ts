@@ -689,6 +689,88 @@ test('restore published project: source files resolved outside the input are rej
 	}
 });
 
+test('restore published project: package directory resolved outside the input is rejected before reading', async (t) => {
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-restore-dir-escape-'));
+	const releaseDir = path.join(tmpDir, 'release');
+	const escapeDir = path.join(releaseDir, 'DirEscapePkg');
+	const outsideDir = path.join(tmpDir, 'outside');
+	const outputDir = path.join(tmpDir, 'Restored');
+
+	try {
+		const doc = new Document();
+		const pkg = doc.createPackage('DirEscapePkg');
+		pkg.setId('escape01').setPublishName('DirEscapePkg');
+
+		await fs.mkdir(escapeDir, { recursive: true });
+		await fs.mkdir(outsideDir, { recursive: true });
+		await io.writeBinary(doc, path.join(escapeDir, 'DirEscapePkg_fui.bytes'));
+
+		const restoreFs = createRestoreFs();
+		const resolvePath = restoreFs.resolvePath.bind(restoreFs);
+		restoreFs.resolvePath = async (filePath) => path.resolve(filePath) === path.resolve(escapeDir)
+			? outsideDir
+			: resolvePath(filePath);
+
+		await t.throwsAsync(
+			() => restore({
+				inputDir: releaseDir,
+				output: outputDir,
+				fs: restoreFs,
+				force: true,
+			}),
+			{ message: /resolves outside the input directory/ },
+		);
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
+test('restore published project: nested companion files resolved outside the input are rejected', async (t) => {
+	const io = new NodeIO();
+	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-restore-nested-source-escape-'));
+	const releaseDir = path.join(tmpDir, 'release');
+	const packageDir = path.join(releaseDir, 'LayeredEscapePkg');
+	const outputDir = path.join(tmpDir, 'Restored');
+
+	try {
+		const doc = new Document();
+		const pkg = doc.createPackage('LayeredEscapePkg');
+		pkg.setId('escape02').setPublishName('LayeredEscapePkg');
+		const sound = doc.createSoundResource('alert');
+		sound.setId('snd002').setPath('/sound/').setFile('alert.wav').setExported(true);
+		pkg.addResource(sound);
+
+		await fs.mkdir(packageDir, { recursive: true });
+		await io.writeBinary(doc, path.join(packageDir, 'LayeredEscapePkg_fui.bytes'));
+		await fs.writeFile(path.join(packageDir, 'LayeredEscapePkg_snd002.wav'), new Uint8Array([0x01]));
+		await fs.writeFile(path.join(packageDir, 'LayeredEscapePkg_alert.wav'), new Uint8Array([0x01]));
+		await fs.writeFile(path.join(packageDir, 'alert.wav'), new Uint8Array([0x01]));
+		await fs.mkdir(outputDir, { recursive: true });
+		await fs.writeFile(path.join(outputDir, 'keep.txt'), 'do not overwrite', 'utf-8');
+
+		// 根目录不含 .wav：第一层校验与嵌套 binary 校验均通过，逃逸只能在伴随文件 resolver 处被拒绝。
+		const restoreFs = createRestoreFs();
+		const resolvePath = restoreFs.resolvePath.bind(restoreFs);
+		restoreFs.resolvePath = async (filePath) => filePath.endsWith('.wav')
+			? path.join(tmpDir, 'outside.wav')
+			: resolvePath(filePath);
+
+		await t.throwsAsync(
+			() => restore({
+				inputDir: releaseDir,
+				output: outputDir,
+				fs: restoreFs,
+				force: true,
+			}),
+			{ message: /Published source file resolves outside the input directory/ },
+		);
+		t.is(await fs.readFile(path.join(outputDir, 'keep.txt'), 'utf-8'), 'do not overwrite');
+	} finally {
+		await fs.rm(tmpDir, { recursive: true, force: true });
+	}
+});
+
 test('restore published project: failed asset reconstruction keeps the previous output intact', async (t) => {
 	const io = new NodeIO();
 	const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openfairygui-restore-stage-'));

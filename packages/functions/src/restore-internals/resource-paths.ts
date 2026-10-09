@@ -118,7 +118,7 @@ export async function resolveLooseSourceFile(
 		: outputFileName.endsWith('.skel')
 			? sourceFileCandidates(pkg, `${outputFileName}.bytes`, outputFileName)
 			: sourceFileCandidates(pkg, outputFileName);
-	return resolveSourceFile(fs, sourceDir, candidates);
+	return resolvePackageSourceFile(fs, sourceDir, pkg, candidates);
 }
 
 export async function resolveSourceFile(
@@ -138,6 +138,19 @@ export async function resolveSourceFile(
 		return resolvedSourcePath;
 	}
 	return null;
+}
+
+export async function resolvePackageSourceFile(
+	fs: RestoreFileSystem,
+	sourceDir: string,
+	pkg: Package,
+	candidates: string[],
+): Promise<string | null> {
+	const direct = await resolveSourceFile(fs, sourceDir, candidates);
+	if (direct) return direct;
+	const publishName = pkg.getPublishName() || pkg.getName();
+	assertSafeRestoreSegment(publishName, 'package publish name');
+	return resolveSourceFile(fs, fs.join(sourceDir, publishName), candidates);
 }
 
 export function resourceOutputPath(

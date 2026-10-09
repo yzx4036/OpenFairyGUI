@@ -150,6 +150,10 @@ export const BACKEND_DIAGNOSTIC_GUIDES = [
 	{ code: 'invalid_settings_json', owners: ["core.validation"], remediation: project },
 	{ code: 'path_collision', owners: ["core.validation"], remediation: path },
 	{ code: 'unsafe_path', owners: ["core.validation"], remediation: path },
+	{ code: 'top_view_opaque_blocks_touches', owners: ["core.validation"], remediation: {
+		kind: 'host-action',
+		message: 'Inspect the flagged Top-layer view: while opaque (the default), touches that miss its children land on the view and never reach lower layers. Passive overlays (HUD, banners, toasts) must set opaque="false" and keep decorative children touchable="false", then publish the package again; overlays that intentionally intercept touches (modals, onboarding) can ignore this warning. This diagnostic stays a warning: validation status and exit codes are unchanged.',
+	} },
 	{ code: 'capability_unavailable', owners: ["backend"], remediation: capability },
 	{ code: 'uam_fidelity_unsupported', owners: ["backend"], remediation: capability },
 	{ code: 'save_partial_failure', owners: ["backend"], remediation: write },

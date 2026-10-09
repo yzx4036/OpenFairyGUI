@@ -20,10 +20,12 @@ This directory contains the English documentation used by the static website. It
 | [Architecture Overview](./architecture-overview.md) | Package responsibilities, UAM and backend boundaries, host adapters, and primary data flows. |
 | [Editor Publish Settings](./editor-publish-settings.md) | Actual editor setting files, properties, defaults, output resolution, and current publish behavior. |
 | [Publish Plugins](./publish-plugins.md) | Plugin directories, manifests, lifecycle hooks, fallback behavior, and the boundary with FairyGUI Editor plugins. |
+| [Fork Codegen Policy](../fork-codegen-policy.md) | Fork-specific plugin takeover for code generation, its relationship with the upstream built-in codegen, and upstream sync impact. |
 | [Published Project Recovery Limits](./published-project-restore-limitations.md) | Supported recovery scope, safety constraints, and information that cannot be reconstructed reliably from published artifacts. |
 | [Project XML Attribute Protocol](./project-xml-attribute-reference.md) | Canonical Project XML attributes, aliases, and node-level semantics. |
 | [Project XML DisplayList Tag Alignment](./project-xml-displaylist-variants.md) | Alignment among raw XML tags, protocol variants, and editor `DisplayListItem.type` values. |
 | [FairyGUI Binary Package Format](./fairygui-binary-package-format.md) | V7 package blocks, component decoding, child records, and runtime-phase mapping. |
+| [Fork Branch Enhancements](../CHANGELOG.md) | Distilled record of this fork's changes relative to upstream (publish path rules, CLI --plugin, code generation plugin, and more). |
 | [Getting Started](./guide/getting-started.md) | Local MCP setup, installed-version checks, a first verifiable edit, and CLI / SDK entrypoints. |
 | [Packages and Tools](./guide/packages.md) | Choose the right package and runtime entrypoint. |
 | [Website Home](./index.md) | Entry points for guides, translated references, and the API. |

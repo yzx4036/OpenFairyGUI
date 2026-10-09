@@ -346,7 +346,7 @@ test('repo doctor exercises native codecs rather than accepting version metadata
 
 test('current guidance, public source mappings and bilingual documentation are consistent', () => {
 	const result = checkGuidance(ROOT);
-	assert.equal(result.agentFiles, 7);
+	assert.equal(result.agentFiles, 8);
 	assert.equal(result.tests, available.length);
 	assert(result.documents > 0);
 	assert(readFileSync(path.join(ROOT, 'AGENTS.md'), 'utf8').includes(impactTable(map)));

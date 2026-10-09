@@ -122,6 +122,17 @@ async function readReferenceReleaseNames(dirPath: string): Promise<string[]> {
 		.sort();
 }
 
+// 递归收集目录内所有文件（子文件夹产物约定下，允许失败残留空目录——只断言没有写入任何文件）。
+async function collectFilesRecursively(dirPath: string): Promise<string[]> {
+	const files: string[] = [];
+	for (const entry of await fs.readdir(dirPath, { withFileTypes: true })) {
+		const fullPath = path.join(dirPath, entry.name);
+		if (entry.isDirectory()) files.push(...(await collectFilesRecursively(fullPath)));
+		else files.push(fullPath);
+	}
+	return files;
+}
+
 // Helper: create a simple NodeIO filesystem for publish output
 function createFs() {
 	return {
@@ -498,7 +509,7 @@ test('publish: custom fileExtension works', async (t) => {
 			fs: createFs(),
 		}));
 
-		const bytesPath = path.join(tmpDir, 'UnityPkg_fui.bytes');
+		const bytesPath = path.join(tmpDir, 'UnityPkg', 'UnityPkg_fui.bytes');
 		const stat = await fs.stat(bytesPath).catch(() => null);
 		t.truthy(stat, '_fui.bytes file was created');
 	} finally {
@@ -536,7 +547,7 @@ test('publish: exports published sound resources with Unity naming', async (t) =
 			fs: createFs(),
 		}));
 
-		const targetPath = path.join(tmpDir, 'Basics_o4lt7w.wav');
+		const targetPath = path.join(tmpDir, 'Basics', 'Basics_o4lt7w.wav');
 		const targetData = await fs.readFile(targetPath);
 		t.deepEqual(new Uint8Array(targetData.buffer, targetData.byteOffset, targetData.byteLength), sourceData);
 	} finally {
@@ -571,16 +582,16 @@ test('publish: exports loader skeleton resources and dependency closure with edi
 			'mix-and-match-pma.png',
 		];
 		for (const file of expectedFiles) {
-			const stat = await fs.stat(path.join(tmpDir, file)).catch(() => null);
+			const stat = await fs.stat(path.join(tmpDir, 'Loader', file)).catch(() => null);
 			t.truthy(stat, `${file} was exported`);
 		}
 
 		for (const absentFile of ['spineboy-ess.skel.bytes', 'spineboy-pma.atlas.txt', 'spineboy-pma.png']) {
-			const stat = await fs.stat(path.join(tmpDir, absentFile)).catch(() => null);
+			const stat = await fs.stat(path.join(tmpDir, 'Loader', absentFile)).catch(() => null);
 			t.falsy(stat, `${absentFile} was not exported`);
 		}
 
-		const bytes = await fs.readFile(path.join(tmpDir, 'Loader_fui.bytes'));
+		const bytes = await fs.readFile(path.join(tmpDir, 'Loader', 'Loader_fui.bytes'));
 		const parsed = parsePackageBinary(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 		const byId = new Map(parsed.items.map((item) => [item.id, item]));
 		t.is(byId.get('nbcg7')?.file, 'nbcg7.atlas.txt', 'misc atlas dependency writes runtime item-id file name');
@@ -605,7 +616,7 @@ test('publish: Branch package keeps branch resources and emits separate branch a
 			basePath: path.join(path.dirname(UNITY_BRANCH_LOADER_FAIRY), 'assets'),
 		}));
 
-		const bytes = await fs.readFile(path.join(tmpDir, 'Branch_fui.bytes'));
+		const bytes = await fs.readFile(path.join(tmpDir, 'Branch', 'Branch_fui.bytes'));
 		const parsed = parsePackageBinary(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 		t.deepEqual(parsed.branches, ['dev'], 'separated branch atlas mode keeps package branch list');
 
@@ -620,7 +631,7 @@ test('publish: Branch package keeps branch resources and emits separate branch a
 		t.is(byId.get('kn7w2')?.width, 62, 'branch image width is preserved');
 		t.is(byId.get('kn7w2')?.height, 60, 'branch image height is preserved');
 		t.deepEqual(byId.get('kn7w1')?.branchItems ?? [], ['kn7w2'], 'main image maps to branch image id');
-		const mainRoundTrip = await io.readBinary(path.join(tmpDir, 'Branch_fui.bytes'));
+		const mainRoundTrip = await io.readBinary(path.join(tmpDir, 'Branch', 'Branch_fui.bytes'));
 		const mainPkg = mainRoundTrip.getRoot().getPackage('Branch')!;
 		const mainComponent = mainPkg.getResourceById('kn7w0') as any;
 		const mainLoader = mainComponent.listChildren().find((child: any) => child.getId?.() === 'n0_kn7w');
@@ -638,8 +649,8 @@ test('publish: Branch package keeps branch resources and emits separate branch a
 			],
 			'main publish separates main and branch atlases',
 		);
-		t.truthy(await fs.stat(path.join(tmpDir, 'Branch_atlas0.png')).catch(() => null), 'main atlas png was written');
-		t.truthy(await fs.stat(path.join(tmpDir, 'Branch_atlas0_dev.png')).catch(() => null), 'branch atlas png was written');
+		t.truthy(await fs.stat(path.join(tmpDir, 'Branch', 'Branch_atlas0.png')).catch(() => null), 'main atlas png was written');
+		t.truthy(await fs.stat(path.join(tmpDir, 'Branch', 'Branch_atlas0_dev.png')).catch(() => null), 'branch atlas png was written');
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}
@@ -664,7 +675,7 @@ test('publish: Branch package merges active branch resources onto main ids', asy
 			basePath: path.join(path.dirname(UNITY_BRANCH_LOADER_FAIRY), 'assets'),
 		}));
 
-		const bytes = await fs.readFile(path.join(tmpDir, 'Branch_fui.bytes'));
+		const bytes = await fs.readFile(path.join(tmpDir, 'Branch', 'Branch_fui.bytes'));
 		const parsed = parsePackageBinary(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 		t.deepEqual(parsed.branches, [], 'merged active-branch publish still omits branch table');
 
@@ -676,7 +687,7 @@ test('publish: Branch package merges active branch resources onto main ids', asy
 		t.false(byId.has('kn7w3'), 'branch component is not emitted under its original id');
 		t.is(byId.get('kn7w1')?.width, 62, 'active branch overrides image width');
 		t.is(byId.get('kn7w1')?.height, 60, 'active branch overrides image height');
-		const mergedRoundTrip = await io.readBinary(path.join(tmpDir, 'Branch_fui.bytes'));
+		const mergedRoundTrip = await io.readBinary(path.join(tmpDir, 'Branch', 'Branch_fui.bytes'));
 		const mergedPkg = mergedRoundTrip.getRoot().getPackage('Branch')!;
 		const mergedComponent = mergedPkg.getResourceById('kn7w0') as any;
 		const mergedLoader = mergedComponent.listChildren().find((child: any) => child.getId?.() === 'n0_kn7w');
@@ -756,7 +767,7 @@ test('publish: rejects runtime output without raster capabilities', async (t) =>
 			() => doc.transform(publish({ output: tmpDir, fs: createFs() })),
 			{ message: /requires encoder, basePath, and outputPath/ },
 		);
-		t.deepEqual(await fs.readdir(tmpDir), [], 'strict capability validation runs before writing package artifacts');
+		t.deepEqual(await collectFilesRecursively(tmpDir), [], 'strict capability validation runs before writing package artifacts');
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}
@@ -781,7 +792,7 @@ test('publish: rejects missing atlas source images instead of writing transparen
 			})),
 			{ message: /Could not read image/ },
 		);
-		t.deepEqual(await fs.readdir(tmpDir), [], 'failed atlas input does not write a binary or PNG');
+		t.deepEqual(await collectFilesRecursively(tmpDir), [], 'failed atlas input does not write a binary or PNG');
 	} finally {
 		await fs.rm(tmpDir, { recursive: true, force: true });
 	}
@@ -935,7 +946,7 @@ test('publish: binary output excludes unpublished image resources and preserves 
 			basePath,
 		}));
 
-		const bytes = await fs.readFile(path.join(tmpDir, 'GhostPkg_fui.bytes'));
+		const bytes = await fs.readFile(path.join(tmpDir, 'GhostPkg', 'GhostPkg_fui.bytes'));
 		const parsed = parsePackageBinary(bytes);
 		const itemIds = new Set(parsed.items.map((item) => item.id));
 		t.true(itemIds.has('img_used'), 'referenced image resource is published');
@@ -1043,7 +1054,7 @@ test('publish: generates package-level pixel hit test entries for Unity hit-test
 			basePath: path.join(path.dirname(UNITY_EXAMPLES_FAIRY), 'assets'),
 		}));
 
-		const bytes = await fs.readFile(path.join(tmpDir, 'HitTest_fui.bytes'));
+		const bytes = await fs.readFile(path.join(tmpDir, 'HitTest', 'HitTest_fui.bytes'));
 		const parsed = parsePackageBinary(bytes);
 		t.deepEqual(
 			parsed.hitTestIds.sort((a, b) => a.localeCompare(b)),
@@ -1086,7 +1097,7 @@ test('publish: sample packages retain exported items and indirect resource refer
 		];
 
 		for (const check of checks) {
-			const bytes = await fs.readFile(path.join(tmpDir, check.file));
+			const bytes = await fs.readFile(path.join(tmpDir, check.file.replace(/_fui\.bytes$/, ''), check.file));
 			const parsed = parsePackageBinary(bytes);
 			const itemIds = new Set(parsed.items.map((item) => item.id));
 			for (const itemId of check.itemIds) {

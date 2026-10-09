@@ -1148,6 +1148,9 @@ export const CONTRACT_SNAPSHOT: ContractSnapshot = {
 				"packageCount": {
 					"type": "number"
 				},
+				"pluginsDir": {
+					"type": "string"
+				},
 				"atlasSetting": {
 					"$ref": "#/$defs/__type_3e7e0f03d2"
 				},
@@ -10435,6 +10438,7 @@ export const CONTRACT_SNAPSHOT: ContractSnapshot = {
 						"corrupt_source",
 						"unsupported_resource_kind",
 						"decode_capability_unavailable",
+						"top_view_opaque_blocks_touches",
 						"unsupported_operation",
 						"invalid_project_settings",
 						"project_settings_unchanged",
@@ -13552,7 +13556,8 @@ export const CONTRACT_SNAPSHOT: ContractSnapshot = {
 						"unreadable_source",
 						"corrupt_source",
 						"unsupported_resource_kind",
-						"decode_capability_unavailable"
+						"decode_capability_unavailable",
+						"top_view_opaque_blocks_touches"
 					]
 				},
 				"path": {
@@ -14226,7 +14231,8 @@ export const CONTRACT_SNAPSHOT: ContractSnapshot = {
 						"unreadable_source",
 						"corrupt_source",
 						"unsupported_resource_kind",
-						"decode_capability_unavailable"
+						"decode_capability_unavailable",
+						"top_view_opaque_blocks_touches"
 					]
 				},
 				"path": {
@@ -21465,6 +21471,9 @@ export const CONTRACT_SNAPSHOT: ContractSnapshot = {
 				"packageCount": {
 					"type": "number"
 				},
+				"pluginsDir": {
+					"type": "string"
+				},
 				"atlasSetting": {
 					"$ref": "#/$defs/__type_3e7e0f03d2_read"
 				},
@@ -24133,6 +24142,16 @@ export const CONTRACT_SNAPSHOT: ContractSnapshot = {
 			}
 		},
 		{
+			"code": "top_view_opaque_blocks_touches",
+			"owners": [
+				"core.validation"
+			],
+			"remediation": {
+				"kind": "host-action",
+				"message": "Inspect the flagged Top-layer view: while opaque (the default), touches that miss its children land on the view and never reach lower layers. Passive overlays (HUD, banners, toasts) must set opaque=\"false\" and keep decorative children touchable=\"false\", then publish the package again; overlays that intentionally intercept touches (modals, onboarding) can ignore this warning. This diagnostic stays a warning: validation status and exit codes are unchanged."
+			}
+		},
+		{
 			"code": "capability_unavailable",
 			"owners": [
 				"backend"
@@ -24203,5 +24222,5 @@ export const CONTRACT_SNAPSHOT: ContractSnapshot = {
 			}
 		}
 	],
-	"digest": "5718c7534651570432e9dda5a5cda367cbc292e71e59f5f6ad2e1c55321dee5a"
+	"digest": "6b115648024903f6e8799581d494c944426cdb965a181b029620ad8157b0923b"
 };

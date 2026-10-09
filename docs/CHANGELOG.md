@@ -97,6 +97,43 @@
 - **内容快照**: 上游 v0.6.3 基线（自 v0.3.1 起同步 v0.4.0~v0.6.3，85 个上游提交）+ 全部 Y0Studio 定制：et-fui-codegen 插件（含生成区 marker 保护）、CLI `--plugin`、bytes 按包子文件夹输出、`PublishSettings.pluginsDir`、Top 层 opaque 点击拦截校验告警（`top_view_opaque_blocks_touches`）、`@openfairygui/codegen` 包。
 - **验证**: `pnpm run build` ✅ / `pnpm run lint` ✅（387 files）/ `pnpm run typecheck` ✅ / `pnpm run test` 失败集与合并前基线完全一致（11 项已文档化的 bytes 子文件夹断言债）/ et-fui-codegen 14/14 ✅。
 
+## 2026-10-09 — fork 发布 `y0-v0.2.1`（测试债清零 + 治理链本地化 + 插件构建修复）
+
+- **tag**: `y0-v0.2.1`（annotated，指向发布时 main HEAD）
+- **内容快照**: `y0-v0.2.0` 全量内容 + 以下增强（沿 develop 提交 `4745b8c` → `5bcff7b`）。
+
+### [fix] restore 支持 bytes 子文件夹发布布局（测试债清零，三锻协作）
+
+- **提交**: `e66afe4`（子目录发现 + 伴随文件解析）、`81361a3`（publish 断言同步）、`5acf34d`（扫描规范路径边界校验）、`8f5d921`（嵌套伴随文件逃逸用例）
+- **行为**: restore 两遍扫描发现 `{PkgName}/` 子文件夹二进制（扁平优先去重、子目录 readdir 失败静默跳过、排序与空结果文案保持）；伴随文件解析新增 `resolvePackageSourceFile`（根优先 → 包目录兜底）；扫描层新增规范路径边界校验（复用 `isPathWithin`），拒绝包子目录 junction/symlink 与嵌套二进制逃逸输入根。
+- **背景**: 10 项 publish 断言债（bytes 子文件夹约定）+ 1 项 restore 产品缺口（无法消费 fork 自身子文件夹布局）。三锻协作：OpenCode 修复 → Codex 对抗验证（抓到 junction 逃逸真缺陷并经编排层独立复现）→ OpenCode 定向修复 → Codex 定向复审 approved-with-notes → 注记测试补齐。任务产物：`docs/.hermes/tasks/20261009-test-debt-sync/`。
+- **验证**: functions 两测试文件 73/73 ✅；全量 648 全绿（11 项历史测试债清零，bytes 子文件夹特性引入以来首次）；真实 junction 探针 ✅。
+
+### [fix] et-fui-codegen 构建去掉 `--dts`（消除默认堆 OOM）
+
+- **提交**: `7fc52dc`
+- **行为**: build 脚本去掉 `--dts`。根因：dts 生成沿 `@openfairygui/core` 完整类型图展开（rolldown-rc 病理），内存需求 >8GB（默认 4GB 与 8GB 均 OOM，16GB 才通过）；插件入口指向 src、`dist` 无消费者，dts 产物无用途。
+- **背景**: 该 OOM 是 GitHub CI「Repository checks」job 长期红的根因（`pnpm check` 含 build），并导致干净消费者环境（eval:agent 的构建步骤）失败。
+- **验证**: 默认堆全量 `pnpm build` ✅（插件构建 OOM → 74ms）；插件测试 14/14 ✅；eval:agent 标准消费者流程 10/10 ✅。
+
+### [chore] 治理链本地化（fork 结构满足上游检查）
+
+- **提交**: `7540cc3`、`f88427d`、`feacb97`
+- **行为**: impact map 补 `codegen` 测试组与规则、新增 `packages/codegen/AGENTS.md`、`top_view_opaque_blocks_touches` 诊断补恢复指引并重生成契约数据、双语入口对齐（README_EN / docs/en/README）、仓库检查硬编码计数同步（agentFiles 8、catalog 102）。
+- **背景**: `pnpm test:repo` / `check:agent-links` / `contracts:check` 在 fork 结构下全绿化（CI Guidance / consumer job 失败根因）。
+- **验证**: `pnpm test:repo` 35/35 ✅；`pnpm docs:check` ✅；契约生成物零漂移 ✅。
+
+### [fix] 测试基建与冒烟脚本
+
+- **提交**: `4745b8c`
+- **行为**: `scripts/smoke-test.ts` 的 View 断言同步现行 `panel-entity` 模板（View accessor + getter 接线）。
+- **验证**: `pnpm exec tsx scripts/smoke-test.ts` 7 组全过 ✅。
+
+### 发布门（全功能验收矩阵 18/18）
+
+- typecheck / lint / build / **全量测试 648 全绿（含默认堆复跑）** / `test:repo` / `docs:check` / 插件测试 ×2 / smoke-test / verify-fgui（87 个 C# 文件）/ smoke-projzero / codegen-preserve（覆盖区域生成 live：标记区内替换 + 区外保留 + System preserve + 绑定 overwrite）/ 导入导出 live 往返（13 个 bytes 子文件夹产物 → 恢复 70 个 XML）/ `eval:agent` 10/10（拼UI / 改UI / 发布 / 恢复 / 安全停止）。
+- **已知限制（非阻断）**: 携带 FairyGUI 编辑器 Lua 插件的工程需 `PublishSettings.pluginsDir` 配置或排除 `plugins/` 副本后经 CLI 发布。
+
 ## 2026-08-13 — merge upstream-release → test-merge（v0.2.5 → v0.3.1）
 
 - **上游基线**: `8a8946a`（含 v0.2.6、v0.3.0、v0.3.1：协议类型完整覆盖、SWF 资源保留、项目值校验、发布信任边界加固、backend 路径策略、atomic save/stale lock 恢复等 44 个提交）

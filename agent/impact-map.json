@@ -4,7 +4,8 @@
     "functions": "packages/functions/test/**/*.test.ts",
     "backend": "packages/backend/test/**/*.test.ts",
     "cli": "packages/cli/test/**/*.test.ts",
-    "mcp": "packages/mcp/test/**/*.test.ts"
+    "mcp": "packages/mcp/test/**/*.test.ts",
+    "codegen": "packages/codegen/test/**/*.test.ts"
   },
   "rules": [
     {
@@ -31,6 +32,11 @@
       "paths": ["packages/mcp/**"],
       "tests": ["mcp"],
       "docs": ["docs/architecture-overview.md"]
+    },
+    {
+      "paths": ["packages/codegen/**"],
+      "tests": ["codegen"],
+      "docs": ["docs/fork-codegen-policy.md"]
     },
     {
       "paths": ["docs/.vitepress/**", "scripts/**", "examples/**", "agent/**", "references.json", ".github/**", ".node-version"],

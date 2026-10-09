@@ -35,6 +35,7 @@
 | `packages/backend/**` | backend, cli, mcp | `docs/architecture-overview.md`, `docs/project-validation.md` |
 | `packages/cli/**` | cli, backend | `docs/guide/getting-started.md`, `docs/project-validation.md` |
 | `packages/mcp/**` | mcp | `docs/architecture-overview.md` |
+| `packages/codegen/**` | codegen | `docs/fork-codegen-policy.md` |
 | `docs/.vitepress/**`, `scripts/**`, `examples/**`, `agent/**`, `references.json`, `.github/**`, `.node-version` | core, functions, backend, cli, mcp | `docs/guide/development.md`, `docs/en/guide/development.md` |
 | `docs/**`, `AGENTS.md`, `README.md`, `README_EN.md`, `CHANGELOG.md`, `CHANGELOG_CN.md` | 仅仓库检查 | `docs/README.md`, `docs/en/README.md` |
 <!-- impact-map:end -->
